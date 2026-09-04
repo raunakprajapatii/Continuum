@@ -230,3 +230,36 @@ class TestStreamingSTTMock:
 
         for ev in received:
             assert ev.timestamp.tzinfo is not None, "timestamp is naive (no tzinfo)"
+
+    @pytest.mark.asyncio
+    async def test_on_transcript_exception_does_not_crash_stream(self) -> None:
+        """If the callback raises an error, StreamingSTT should log and continue."""
+        received: List[TranscriptEvent] = []
+
+        async def buggy_capture(ev: TranscriptEvent) -> None:
+            received.append(ev)
+            if len(received) == 1:
+                raise ValueError("Simulated callback crash")
+
+        stt = StreamingSTT(
+            session_id="test-session",
+            thread_id="test-thread",
+            on_transcript=buggy_capture,
+        )
+        await stt.run()
+
+        # Even with the crash on the first event, the stream should finish and deliver all events
+        assert len(received) == len(SCRIPTED_TURNS)
+
+
+class TestLiveSTT:
+    def test_live_stt_unsupported_provider_raises(self) -> None:
+        from unittest.mock import patch
+        from shared.config import settings
+        
+        stt = StreamingSTT("session", "thread", on_transcript=lambda e: None)  # type: ignore
+        with patch.object(settings, "use_mocks", False):
+            backend = stt._make_backend()
+            with patch.object(settings, "stt_provider", "unknown_xyz"):
+                with pytest.raises(ValueError, match="Unknown stt_provider"):
+                    backend._build_stt_plugin()  # type: ignore

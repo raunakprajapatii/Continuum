@@ -83,6 +83,10 @@ class TestNormaliseCallerId:
     def test_whitespace_only_returns_none(self) -> None:
         assert normalise_caller_id("   ") is None
 
+    def test_punctuation_only_returns_none(self) -> None:
+        assert normalise_caller_id("--()") is None
+        assert normalise_caller_id("+") is None
+
     def test_same_number_different_formats_equal(self) -> None:
         a = normalise_caller_id("+1 (415) 555-0199")
         b = normalise_caller_id("+14155550199")

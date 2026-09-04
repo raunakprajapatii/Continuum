@@ -169,18 +169,32 @@ class SignalAgent:
             event.is_reconnect,
         )
 
-        decision: ReconnectDecision = await self._detector.on_event(event)
+        try:
+            decision: ReconnectDecision = await self._detector.on_event(event)
+        except Exception:  # noqa: BLE001
+            logger.exception("SignalAgent: detector raised an error; skipping event.")
+            return
+
         self._current_session_id = event.session_id
 
         if decision.is_reconnect:
-            await self._on_reconnect_detected(decision)
+            try:
+                await self._on_reconnect_detected(decision)
+            except Exception:  # noqa: BLE001
+                logger.exception("SignalAgent: _on_reconnect_detected raised an error.")
 
         if decision.should_start_stt:
-            await self._start_stt(event)
+            try:
+                await self._start_stt(event)
+            except Exception:  # noqa: BLE001
+                logger.exception("SignalAgent: _start_stt raised an error.")
 
         if decision.should_stop_stt:
-            await self._stop_stt()
-            await self._notify_call_ended(event, abruptly=decision.call_ended_abruptly)
+            try:
+                await self._stop_stt()
+                await self._notify_call_ended(event, abruptly=decision.call_ended_abruptly)
+            except Exception:  # noqa: BLE001
+                logger.exception("SignalAgent: _stop_stt/_notify_call_ended raised an error.")
 
     # ── Reconnect handling ────────────────────────────────────────────────────
 

@@ -77,9 +77,14 @@ def normalise_caller_id(raw: Optional[str]) -> Optional[str]:
 
     # Treat everything else as a phone number
     stripped = _E164_STRIP.sub("", raw)
+    
     # Ensure leading '+' is preserved if present in the original
     if raw.startswith("+") and not stripped.startswith("+"):
         stripped = "+" + stripped
+        
+    if not stripped or stripped == "+":
+        return None
+        
     return stripped.lower()
 
 

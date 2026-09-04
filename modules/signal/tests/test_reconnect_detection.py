@@ -208,3 +208,17 @@ class TestReconnectDetection:
         decision = await detector.on_event(_ev(CallState.RINGING, session_id=SESSION_2, thread_id=None))
         assert decision.is_reconnect
         assert decision.prior_thread_id == custom_thread
+
+    @pytest.mark.asyncio
+    async def test_unknown_state_is_passed_through(
+        self, detector: ReconnectDetector
+    ) -> None:
+        """Unknown CallState should not crash the detector."""
+        event = _ev(CallState.RINGING, session_id=SESSION_1)
+        # Bypass validation by setting attribute directly
+        object.__setattr__(event, "state", "FAKE_STATE")
+        
+        decision = await detector.on_event(event)
+        assert not decision.should_start_stt
+        assert not decision.should_stop_stt
+        assert not decision.is_reconnect

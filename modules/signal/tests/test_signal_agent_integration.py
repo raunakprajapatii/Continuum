@@ -193,3 +193,60 @@ class TestSignalAgentIntegration:
         assert all(not active for active in stt_states_during_ringing), (
             "STT was active during RINGING — it should only start at CONNECTED"
         )
+
+    @pytest.mark.asyncio
+    async def test_agent_survives_callback_exceptions(self) -> None:
+        """Exceptions in Brain callbacks must not crash the agent's main loop."""
+        async def buggy_transcript(ev: TranscriptEvent) -> None:
+            raise RuntimeError("Brain queue full")
+            
+        async def buggy_reconnect(sid: str, tid: Optional[str], cid: Optional[str]) -> None:
+            raise ValueError("Brain reconnect error")
+            
+        async def buggy_call_ended(sid: str, abruptly: bool) -> None:
+            raise KeyError("Brain call ended error")
+
+        agent = SignalAgent(
+            on_transcript=buggy_transcript,
+            on_reconnect=buggy_reconnect,
+            on_call_ended=buggy_call_ended,
+        )
+        session = MockCallSession(scenario="reconnect", ring_duration_s=0.1)
+        
+        # This should complete without raising any exceptions up to the test runner
+        await agent.run(session.event_stream())
+
+    @pytest.mark.asyncio
+    async def test_cancellation_cleans_up_stt(self) -> None:
+        """If the agent's run() task is cancelled, STT is stopped."""
+        col = _Collector()
+        agent = _make_agent(col)
+        
+        # Create an event stream that hangs indefinitely in CONNECTED
+        async def hanging_stream():
+            from shared.schemas import CallState, CallStateEvent
+            import uuid
+            from datetime import datetime, timezone
+            yield CallStateEvent(
+                event_id=str(uuid.uuid4()), session_id="1", thread_id="1",
+                state=CallState.RINGING, timestamp=datetime.now(timezone.utc)
+            )
+            yield CallStateEvent(
+                event_id=str(uuid.uuid4()), session_id="1", thread_id="1",
+                state=CallState.CONNECTED, timestamp=datetime.now(timezone.utc)
+            )
+            await asyncio.sleep(10) # Hang here
+            
+        agent_task = asyncio.create_task(agent.run(hanging_stream()))
+        
+        # Give it a moment to process the CONNECTED event
+        await asyncio.sleep(0.1) 
+        assert agent.is_stt_active
+        
+        # Cancel the task
+        agent_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await agent_task
+            
+        # Verify STT was cleaned up
+        assert not agent.is_stt_active
