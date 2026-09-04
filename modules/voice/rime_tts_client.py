@@ -37,16 +37,21 @@ from shared.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# spell() is embedded in text via Mist v2 inline syntax.
-# If the text contains spell() calls, we must use MIST_V2.
+# Optimal Rime voice for Continuum headphone whisper (per RIME_VOICE_DESIGN.md):
+# "eyre" (Female 30–50, American, warm, calm, easy to listen to).
+DEFAULT_CONTINUUM_SPEAKER = "eyre"
+
+# spell() is embedded in text via Mist v2 / Mist v3 inline syntax.
+# If the text contains spell() calls, we use MIST_V2 by default for reliable letter-by-letter synthesis.
 _SPELL_MARKER = "spell("
 
-# Urgency → time_scale_factor mapping.
-# Shorter ring window → faster speech (lower factor speeds up Rime output).
+# Urgency → time_scale_factor mapping per blueprint § 12 and RIME_RESEARCH.md.
+# On Coda and Mist v3, timeScaleFactor < 1.0 produces faster speech.
+# On Mist v2, speedAlpha < 1.0 produces faster speech.
 _URGENCY_SPEED: dict[RecapUrgency, float] = {
-    RecapUrgency.HEADLINE_ONLY: 0.75,   # sprint through it
+    RecapUrgency.HEADLINE_ONLY: 0.75,   # sprint through headline
     RecapUrgency.STANDARD:      0.85,   # blueprint default
-    RecapUrgency.EXTENDED:      0.90,   # a bit more breathing room
+    RecapUrgency.EXTENDED:      0.90,   # unhurried, natural breathing room
 }
 
 
@@ -67,10 +72,15 @@ class RimeTtsClient:
         self,
         speaker: Optional[str] = None,
         private_track_id: Optional[str] = None,
+        default_model: Optional[RimeModel] = None,
     ) -> None:
-        # Use injected values or fall back to settings (enables testing overrides)
-        self._speaker = speaker or settings.rime_default_speaker
+        # Use injected values or fall back to settings / Continuum optimal defaults
+        resolved_speaker = speaker or getattr(settings, "rime_default_speaker", None)
+        if not resolved_speaker or resolved_speaker in ("sol", "default", ""):
+            resolved_speaker = DEFAULT_CONTINUUM_SPEAKER
+        self._speaker = resolved_speaker
         self._private_track_id = private_track_id or settings.private_track_id
+        self._default_model = default_model
 
     def make_request(
         self,
@@ -145,14 +155,17 @@ class RimeTtsClient:
                 "Rime audio must NEVER be routed to the caller-facing track."
             )
 
-    @staticmethod
-    def _select_model(text: str) -> RimeModel:
+    def _select_model(self, text: str) -> RimeModel:
         """
         Select the Rime model.
 
+        If a default_model override was provided, it takes precedence.
+        Otherwise:
         MIST_V2 is required when the text contains ``spell(...)`` markers.
         CODA is used for all other recap text (most common case).
         """
+        if self._default_model:
+            return self._default_model
         if _SPELL_MARKER in text:
             return RimeModel.MIST_V2
         return RimeModel.CODA
@@ -162,12 +175,8 @@ class RimeTtsClient:
         """
         Return the appropriate speed parameter for the model + urgency.
 
-        For MIST_V2: speed_alpha (lower = faster, so we invert relative to
-        time_scale_factor which is < 1 for faster).
-        For CODA / MIST_V3: time_scale_factor directly.
+        Per Rime documentation:
+        - For CODA / MIST_V3: timeScaleFactor < 1.0 speeds up, > 1.0 slows down.
+        - For MIST_V2: speedAlpha < 1.0 speeds up, > 1.0 slows down.
         """
-        tsf = _URGENCY_SPEED.get(urgency, 0.85)
-        if model == RimeModel.MIST_V2:
-            # speed_alpha ≈ 1 / time_scale_factor  (rough mapping)
-            return round(1.0 / tsf, 2)
-        return tsf
+        return _URGENCY_SPEED.get(urgency, 0.92)
