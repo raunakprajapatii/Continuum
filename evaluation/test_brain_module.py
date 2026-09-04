@@ -340,6 +340,10 @@ def test_recap_urgency_and_extreme_windows():
     assert req.urgency == RecapUrgency.HEADLINE_ONLY
     assert req.estimated_ring_window_seconds == 0.0  # Clamped to min 0.0
 
+    req_invalid = build_recap_request(summary, session_id="s_2", estimated_ring_window_seconds="invalid")
+    assert req_invalid.urgency == RecapUrgency.STANDARD
+    assert req_invalid.estimated_ring_window_seconds is None
+
 
 # ── BrainService Full Call Cycle & Thread Evolution Tests ────────────────────
 

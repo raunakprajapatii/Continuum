@@ -77,11 +77,13 @@ def build_recap_request(
     else:
         facts_to_verify = list(summary.time_sensitive_facts or [])
 
-    safe_window = (
-        max(0.0, float(estimated_ring_window_seconds))
-        if estimated_ring_window_seconds is not None
-        else None
-    )
+    if estimated_ring_window_seconds is None:
+        safe_window = None
+    else:
+        try:
+            safe_window = max(0.0, float(estimated_ring_window_seconds))
+        except (TypeError, ValueError):
+            safe_window = None
 
     return RecapRequest(
         request_id=str(uuid.uuid4()),

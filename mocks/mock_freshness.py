@@ -22,6 +22,7 @@ Also importable for programmatic use in tests:
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -59,7 +60,7 @@ try:
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel as _BaseModel
 
-    app = FastAPI(
+    app: Any = FastAPI(
         title="Continuum Mock Freshness API",
         description=(
             "Deterministic mock data source for the Fact-Freshness Checker. "
@@ -103,8 +104,71 @@ try:
         return {"status": "ok", "service": "mock-freshness-api"}
 
 except ImportError:
-    # FastAPI not installed — that's fine for schema-only usage in tests
-    app = None  # type: ignore[assignment]
+    async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """
+        Minimal ASGI fallback for test environments without FastAPI.
+
+        This preserves the mock freshness contract used by httpx.ASGITransport:
+        GET /facts/{key}, POST /facts/{key}, and GET /health.
+        """
+        if scope["type"] != "http":
+            raise RuntimeError("mock_freshness fallback only supports HTTP scopes")
+
+        method = scope["method"]
+        path = scope["path"]
+
+        status = 404
+        payload: dict[str, Any] = {"detail": f"Unknown route: {method} {path}"}
+
+        if method == "GET" and path == "/health":
+            status = 200
+            payload = {"status": "ok", "service": "mock-freshness-api"}
+        elif path.startswith("/facts/"):
+            key = path.removeprefix("/facts/")
+            if method == "GET":
+                value = get_fact_value(key)
+                if value is None:
+                    status = 404
+                    payload = {"detail": f"Unknown fact key: {key!r}"}
+                else:
+                    status = 200
+                    payload = {
+                        "key": key,
+                        "value": value,
+                        "retrieved_at": datetime.now(tz=timezone.utc).isoformat(),
+                        "latency_ms": 12,
+                    }
+            elif method == "POST":
+                body = b""
+                more_body = True
+                while more_body:
+                    event = await receive()
+                    body += event.get("body", b"")
+                    more_body = event.get("more_body", False)
+
+                try:
+                    value = json.loads(body.decode("utf-8"))["value"]
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    status = 422
+                    payload = {"detail": "Body must be JSON with a string value field"}
+                else:
+                    set_fact_value(key, str(value))
+                    status = 200
+                    payload = {
+                        "key": key,
+                        "value": str(value),
+                        "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+                    }
+
+        body_bytes = json.dumps(payload).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": body_bytes})
 
 
 if __name__ == "__main__":

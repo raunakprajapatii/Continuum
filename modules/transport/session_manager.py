@@ -203,7 +203,9 @@ class CallSessionManager:
             elif new_state in (CallState.COMPLETED, CallState.DISCONNECTED):
                 if new_state == CallState.DISCONNECTED:
                     # Abrupt hangup: mark thread as interrupted so reconnect can match it
-                    if self._caller_id and self._thread_id:
+                    if not self._thread_id:
+                        self._thread_id = f"thread-{uuid.uuid4().hex[:8]}"
+                    if self._caller_id:
                         self.register_interrupted_thread(self._caller_id, self._thread_id)
                 logger.info(
                     "Call ENDED (%s, session=%s)",
