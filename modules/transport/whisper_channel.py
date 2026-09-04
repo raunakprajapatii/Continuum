@@ -78,7 +78,10 @@ class PrivateWhisperChannel:
         self._current_playback_task: Optional[asyncio.Task] = None
         self._active_tts_request: Optional[TtsRequest] = None
         self._last_metrics: Optional[PlaybackMetrics] = None
-        self._interrupt_event = asyncio.Event()
+        # NOTE: _interrupt_event is intentionally NOT created here.
+        # asyncio.Event must be created inside a running event loop to avoid
+        # binding to a different loop when the module is imported before asyncio.run().
+        self._interrupt_event: Optional[asyncio.Event] = None
 
     @property
     def private_track_id(self) -> str:
@@ -158,7 +161,10 @@ class PrivateWhisperChannel:
             await self.interrupt(reason="new_recap_request")
 
         self._active_tts_request = request
-        self._interrupt_event.clear()
+        # Create a fresh Event per playback so stale interrupt signals never
+        # bleed into the next recap.  Also ensures the Event is always created
+        # inside the running event loop (resolves loop-binding issue on import).
+        self._interrupt_event = asyncio.Event()
         self._is_playing = True
 
         metrics = PlaybackMetrics(
@@ -231,7 +237,8 @@ class PrivateWhisperChannel:
             return 0.0
 
         logger.info("Interrupting private whisper playback (reason=%s)", reason)
-        self._interrupt_event.set()
+        if self._interrupt_event is not None:
+            self._interrupt_event.set()
 
         if self._current_playback_task and not self._current_playback_task.done():
             self._current_playback_task.cancel()
@@ -254,21 +261,22 @@ class PrivateWhisperChannel:
         Respects interruptibility and mock modes.
         """
         # Calculate simulated duration: rough speech rate ~15 chars/sec
-        # Speed modifier adjusts duration
+        # Speed modifier adjusts duration.
+        # time_scale_factor > 1.0 → faster TTS → shorter simulated audio.
         speed_factor = request.time_scale_factor or 1.0
         effective_speed = max(0.5, speed_factor)
-        base_duration = max(0.5, len(request.text) / (15.0 / effective_speed))
+        # Correct formula: chars / (chars_per_sec * speed) → seconds
+        base_duration = max(0.5, len(request.text) / (15.0 * effective_speed))
 
         # Chunk streaming in 100ms intervals to test fine-grained barge-in
         chunk_interval = 0.05
         elapsed = 0.0
 
         while elapsed < base_duration:
-            if self._interrupt_event.is_set():
-                stop_latency_ms = 15.0  # minimal internal latency
-                bi = BargeInInterruption("Barge-in detected during playback")
-                bi.stop_latency_ms = stop_latency_ms  # type: ignore
-                raise bi
+            if self._interrupt_event is not None and self._interrupt_event.is_set():
+                raise BargeInInterruption(
+                    "Barge-in detected during playback", stop_latency_ms=15.0
+                )
 
             await asyncio.sleep(chunk_interval)
             elapsed += chunk_interval

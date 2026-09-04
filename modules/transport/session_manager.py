@@ -255,15 +255,24 @@ class CallSessionManager:
         Mid-call Catch-Up Action (User feedback requirement):
         When the call is already answered/lifted (or if ring recap did not complete in time),
         the user activates this option to duck caller audio and play recap in their earpiece.
+
+        Raises:
+            SessionStateError: If the call is not currently in the CONNECTED state,
+                               preventing ducking on a completed or idle call.
         """
         if self._current_state != CallState.CONNECTED:
-            logger.warning("Mid-call catch-up triggered while call is not CONNECTED (%s)", self._current_state)
+            raise SessionStateError(
+                f"Mid-call catch-up requires CONNECTED state, but current state is "
+                f"{self._current_state.value!r}. Activate only while a call is in progress."
+            )
 
         logger.info("Executing mid-call catch-up with audio ducking enabled...")
 
-        # If custom callback provided, get the TtsRequest, else use standard thread request
+        # If custom callback provided, get the TtsRequest, else use standard thread request.
+        # Supports both sync and async callbacks.
         if recap_request_callback:
-            tts_req = recap_request_callback()
+            result = recap_request_callback()
+            tts_req = await result if asyncio.iscoroutine(result) else result
         else:
             from mocks.mock_brain import make_recap_request
             recap_req = make_recap_request()
@@ -328,5 +337,11 @@ class CallSessionManager:
             await asyncio.sleep(connected_duration_s)
             e_comp = await self.transition_to(CallState.COMPLETED)
             events.append(e_comp)
+
+        else:
+            raise ValueError(
+                f"Unknown call scenario: {scenario!r}. "
+                f"Valid scenarios are: 'normal', 'reconnect', 'instant_connect'."
+            )
 
         return events

@@ -48,5 +48,11 @@ class BargeInInterruption(TransportError):
     """
     Signaled when a user barge-in event interrupts currently playing or queued
     recap audio on the private track.
+
+    Carries ``stop_latency_ms`` so callers can log and assert the cancellation
+    speed without needing a dynamic attribute hack.
     """
-    pass
+
+    def __init__(self, message: str = "Barge-in detected", stop_latency_ms: float = 0.0) -> None:
+        super().__init__(message)
+        self.stop_latency_ms: float = stop_latency_ms

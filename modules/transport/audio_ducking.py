@@ -106,19 +106,35 @@ class AudioDuckingController:
           - A recap is triggered while call is already in CONNECTED state.
           - User presses mid-call catch-up button.
           - Pre-answer recap is still finishing when user answers the call.
+
+        Args:
+            caller_volume: Multiplier for caller voice in user's earpiece (0.0–1.0).
+                           Defaults to DEFAULT_DUCKED_CALLER_VOLUME (0.25).
+            recap_volume:  Multiplier for recap audio (0.0–2.0).
+                           Defaults to DEFAULT_BOOSTED_RECAP_VOLUME (1.25).
+            reason:        Logging label for this ducking event.
+
+        Raises:
+            ValueError: If caller_volume or recap_volume are outside valid ranges.
         """
-        async with self._lock:
-            target_caller = (
-                caller_volume
-                if caller_volume is not None
-                else self._ducked_caller_volume
+        target_caller = (
+            caller_volume if caller_volume is not None else self._ducked_caller_volume
+        )
+        target_recap = (
+            recap_volume if recap_volume is not None else self._boosted_recap_volume
+        )
+
+        # Validate volume bounds before acquiring the lock
+        if not (0.0 <= target_caller <= 1.0):
+            raise ValueError(
+                f"caller_volume must be in [0.0, 1.0]; got {target_caller!r}."
             )
-            target_recap = (
-                recap_volume
-                if recap_volume is not None
-                else self._boosted_recap_volume
+        if not (0.0 <= target_recap <= 2.0):
+            raise ValueError(
+                f"recap_volume must be in [0.0, 2.0]; got {target_recap!r}."
             )
 
+        async with self._lock:
             self._current_caller_volume = target_caller
             self._current_recap_volume = target_recap
             self._is_ducked = True
@@ -137,6 +153,7 @@ class AudioDuckingController:
                     await res
 
             return levels
+
 
     async def restore_levels(self, reason: str = "recap_complete") -> AudioLevels:
         """

@@ -70,7 +70,14 @@ class TransportEngine:
         return self._is_running
 
     async def start(self) -> None:
-        """Initialize and start the Transport engine."""
+        """Initialize and start the Transport engine.
+
+        Idempotent — calling start() on an already-running engine is a no-op.
+        """
+        if self._is_running:
+            logger.debug("TransportEngine.start() called while already running — skipping.")
+            return
+
         logger.info(
             "Starting Transport Engine (use_mocks=%s, private_track_id=%s)",
             self._use_mocks,
@@ -82,8 +89,13 @@ class TransportEngine:
                 # LiveKit connection setup if credentials are valid
                 logger.info("Initializing LiveKit connection to %s", settings.livekit_url)
                 # Production LiveKit room connection logic
-            except Exception as exc:
-                logger.warning("Could not connect to live LiveKit cloud: %s. Falling back to simulated transport.", exc)
+            except OSError as exc:
+                # Catch network-level failures only; do NOT swallow CancelledError/SystemExit.
+                logger.warning(
+                    "Could not connect to live LiveKit cloud: %s. "
+                    "Falling back to simulated transport.",
+                    exc,
+                )
 
         self._is_running = True
 
