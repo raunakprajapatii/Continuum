@@ -74,6 +74,7 @@ class VoicePipeline:
         self._freshness = freshness_checker or FreshnessChecker()
         self._builder = text_builder or RecapTextBuilder()
         self._tts = tts_client or RimeTtsClient()
+        self.last_metrics: dict[str, object] = {}
 
     async def run(self, recap_request: RecapRequest) -> TtsRequest:
         """
@@ -137,15 +138,27 @@ class VoicePipeline:
         step3_ms = int((time.monotonic() - t0) * 1000)
 
         total_ms = int((time.monotonic() - pipeline_start) * 1000)
+        self.last_metrics = {
+            "request_id": req_id,
+            "step1_freshness_ms": step1_ms,
+            "step2_text_ms": step2_ms,
+            "step3_tts_ms": step3_ms,
+            "total_ms": total_ms,
+            "model": tts_request.model.value,
+            "speaker": tts_request.speaker,
+            "char_count": len(spoken_text),
+            "word_count": len(spoken_text.split()),
+        }
         logger.info(
             "voice_pipeline: DONE request_id=%s total=%dms "
-            "(freshness=%dms text=%dms tts=%dms) model=%s",
+            "(freshness=%dms text=%dms tts=%dms) model=%s speaker=%s",
             req_id,
             total_ms,
             step1_ms,
             step2_ms,
             step3_ms,
             tts_request.model.value,
+            tts_request.speaker,
         )
 
         return tts_request

@@ -47,6 +47,28 @@ _ID_RE = re.compile(
     r"\b([A-Z]{2,}-\d+|[A-Z]{3,}\d+|\b\d{5,})\b"
 )
 
+_MONTH_NAMES = {
+    "01": "January", "1": "January",
+    "02": "February", "2": "February",
+    "03": "March", "3": "March",
+    "04": "April", "4": "April",
+    "05": "May", "5": "May",
+    "06": "June", "6": "June",
+    "07": "July", "7": "July",
+    "08": "August", "8": "August",
+    "09": "September", "9": "September",
+    "10": "October",
+    "11": "November",
+    "12": "December",
+}
+
+
+def _ordinal_suffix(n: int) -> str:
+    if 11 <= (n % 100) <= 13:
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
 
 # ── Validation ─────────────────────────────────────────────────────────────────
 
@@ -198,6 +220,7 @@ class RecapTextBuilder:
 
         if urgency == RecapUrgency.HEADLINE_ONLY:
             text = self._join(parts)
+            text = self.prenormalize_text(text)
             text = self.wrap_ids(text)
             self._validate(text)
             return text
@@ -237,11 +260,52 @@ class RecapTextBuilder:
             parts.append(next_action)
 
         text = self._join(parts)
+        text = self.prenormalize_text(text)
         text = self.wrap_ids(text)
         self._validate(text)
         return text
 
     # ── helpers ────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def prenormalize_text(cls, text: str) -> str:
+        """
+        Pre-normalizes known Rime normalizer gaps per RIME_RESEARCH.md & docs.rime.ai:
+        - MM/DD dates without year -> 'Month ordinal' (e.g. 04/21 -> April 21st)
+        - Bare hours with meridiem -> 3pm -> 3:00pm
+        - Numeric ranges -> 10-15 -> 10 to 15 (avoids literal hyphen reading)
+        - Decades -> 1990s -> the nineteen nineties
+        - Replaces exclamation marks with periods for a calm, composed baseline.
+        """
+        # 1. Dates without year (e.g. 04/21 or 4/21 not followed by /YYYY)
+        def replace_date(match: re.Match) -> str:
+            month_num = match.group(1)
+            day_num = int(match.group(2))
+            month_name = _MONTH_NAMES.get(month_num)
+            if month_name:
+                return f"{month_name} {_ordinal_suffix(day_num)}"
+            return match.group(0)
+
+        text = re.sub(
+            r"\b(0?[1-9]|1[0-2])/(0?[1-9]|[12]\d|3[01])(?!\s*/\s*\d{2,4})\b",
+            replace_date,
+            text,
+        )
+
+        # 2. Bare hours with meridiem (e.g. 3pm or 3 pm -> 3:00pm)
+        text = re.sub(r"\b([1-9]|1[0-2])\s*([ap]m)\b", r"\1:00\2", text, flags=re.IGNORECASE)
+
+        # 3. Numeric ranges (pure digits e.g. 10-15 -> 10 to 15)
+        text = re.sub(r"\b(\d+)\s*-\s*(\d+)\b", r"\1 to \2", text)
+
+        # 4. Decades
+        text = re.sub(r"\b1990s\b", "the nineteen nineties", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b1980s\b", "the nineteen eighties", text, flags=re.IGNORECASE)
+
+        # 5. Calm prosody (replace exclamation with period)
+        text = text.replace("!", ".")
+
+        return text
 
     @staticmethod
     def wrap_ids(text: str) -> str:

@@ -514,6 +514,29 @@ class TestRecapTextBuilderAdvanced:
         violations = RimePromptValidator().validate(text)
         assert violations == []
 
+    def test_builder_prenormalize_bare_dates(self) -> None:
+        raw = "Appointment set for 04/21. Flight is on 10/12/2026."
+        normalized = RecapTextBuilder.prenormalize_text(raw)
+        assert "April 21st" in normalized
+        assert "10/12/2026" in normalized  # Dates with year pass through natively to Rime
+
+    def test_builder_prenormalize_bare_hours(self) -> None:
+        raw = "Call back at 3pm or 5 pm tomorrow."
+        normalized = RecapTextBuilder.prenormalize_text(raw)
+        assert "3:00pm" in normalized
+        assert "5:00pm" in normalized
+
+    def test_builder_prenormalize_numeric_ranges(self) -> None:
+        raw = "Quantity requested is 10-15 units."
+        normalized = RecapTextBuilder.prenormalize_text(raw)
+        assert "10 to 15" in normalized
+
+    def test_builder_calm_prosody_replaces_exclamation(self) -> None:
+        raw = "Heads up! Price changed! Your move!"
+        calm = RecapTextBuilder.prenormalize_text(raw)
+        assert "!" not in calm
+        assert "Heads up. Price changed. Your move." == calm
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. VoicePipeline — End-to-End Async Orchestration tests
@@ -599,6 +622,18 @@ class TestVoicePipelineEndToEnd:
         await pipeline.aclose()
 
     @pytest.mark.asyncio
+    async def test_pipeline_e2e_records_telemetry_metrics(self, live_pipeline) -> None:
+        req = make_recap_request()
+        tts_req = await live_pipeline.run(req)
+        metrics = live_pipeline.last_metrics
+        assert metrics["request_id"] == req.request_id
+        assert metrics["total_ms"] >= 0
+        assert metrics["model"] == tts_req.model.value
+        assert metrics["char_count"] > 0
+        assert metrics["word_count"] > 0
+
+    @pytest.mark.asyncio
     async def test_pipeline_aclose(self, live_pipeline) -> None:
         await live_pipeline.aclose()
+
 
