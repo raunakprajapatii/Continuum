@@ -198,6 +198,7 @@ class RecapTextBuilder:
 
         if urgency == RecapUrgency.HEADLINE_ONLY:
             text = self._join(parts)
+            text = self.wrap_ids(text)
             self._validate(text)
             return text
 
@@ -236,10 +237,27 @@ class RecapTextBuilder:
             parts.append(next_action)
 
         text = self._join(parts)
+        text = self.wrap_ids(text)
         self._validate(text)
         return text
 
-    # ── private helpers ────────────────────────────────────────────────────────
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def wrap_ids(text: str) -> str:
+        """Wrap bare ticket / ID tokens in spell(...) per Rule 6."""
+        def replacer(match: re.Match) -> str:
+            return f"spell({match.group(0)})"
+
+        parts: list[str] = []
+        last_idx = 0
+        for m in re.finditer(r"spell\([^)]*\)", text):
+            segment = text[last_idx:m.start()]
+            parts.append(_ID_RE.sub(replacer, segment))
+            parts.append(m.group(0))
+            last_idx = m.end()
+        parts.append(_ID_RE.sub(replacer, text[last_idx:]))
+        return "".join(parts)
 
     def _validate(self, text: str) -> None:
         violations = self._validator.validate(text)

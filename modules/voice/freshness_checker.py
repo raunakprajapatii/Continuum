@@ -56,9 +56,13 @@ class FreshnessChecker:
     created lazily and shared across calls.
     """
 
-    def __init__(self, timeout: float = _TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self,
+        timeout: float = _TIMEOUT_SECONDS,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._timeout = timeout
-        self._client: httpx.AsyncClient | None = None
+        self._client: httpx.AsyncClient | None = client
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

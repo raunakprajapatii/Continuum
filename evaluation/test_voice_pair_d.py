@@ -22,10 +22,16 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 
 from mocks.mock_brain import make_recap_request
-from mocks.mock_freshness import get_fact_value, set_fact_value
+from mocks.mock_freshness import (
+    _FACT_STORE,
+    app as mock_freshness_app,
+    get_fact_value,
+    set_fact_value,
+)
 from modules.voice import (
     FreshnessChecker,
     MockVoicePipeline,
@@ -33,14 +39,18 @@ from modules.voice import (
     RecapTextValidationError,
     RimePromptValidator,
     RimeTtsClient,
+    VoicePipeline,
 )
-from modules.voice.mock_pipeline import MockVoicePipeline
 from shared.schemas import (
+    Commitment,
     FactCheckResult,
     FreshnessResult,
     FreshnessStatus,
+    RecapRequest,
     RecapUrgency,
     RimeModel,
+    ThreadSummary,
+    TimeSensitiveFact,
 )
 
 ARTIFACTS = Path(__file__).parent / "artifacts"
@@ -328,3 +338,267 @@ async def test_pair_d_evidence_artifact() -> None:
 
     assert evidence["freshness_flag_present"], "Freshness flag missing from recap"
     assert evidence["dual_track_invariant_held"], "Dual-track invariant violated"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. FreshnessChecker — Live async query tests (with ASGI mock app)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestFreshnessCheckerLive:
+    @pytest.fixture
+    def mock_client(self):
+        transport = httpx.ASGITransport(app=mock_freshness_app)
+        return httpx.AsyncClient(transport=transport, base_url="http://localhost:8001")
+
+    @pytest.mark.asyncio
+    async def test_freshness_detects_changed_value_live(self, mock_client) -> None:
+        set_fact_value("price_usd", "$450")
+        checker = FreshnessChecker(client=mock_client)
+        req = make_recap_request()
+        result = await checker.check(req)
+
+        assert result.any_changed is True
+        res = next(r for r in result.results if r.key == "price_usd")
+        assert res.status == FreshnessStatus.CHANGED
+        assert res.cached_value == "$400"
+        assert res.live_value == "$450"
+        assert res.latency_ms >= 0
+        assert "Heads up" in (res.spoken_flag or "")
+
+    @pytest.mark.asyncio
+    async def test_freshness_detects_unchanged_value_live(self, mock_client) -> None:
+        set_fact_value("price_usd", "$400")
+        checker = FreshnessChecker(client=mock_client)
+        req = make_recap_request()
+        result = await checker.check(req)
+
+        assert result.any_changed is False
+        res = next(r for r in result.results if r.key == "price_usd")
+        assert res.status == FreshnessStatus.UNCHANGED
+        assert res.cached_value == "$400"
+        assert res.live_value == "$400"
+        assert res.spoken_flag is None
+
+    @pytest.mark.asyncio
+    async def test_freshness_handles_404_fact_gracefully(self, mock_client) -> None:
+        checker = FreshnessChecker(client=mock_client)
+        req = make_recap_request()
+        fact = TimeSensitiveFact(
+            key="nonexistent_key_999",
+            label="Nonexistent Fact",
+            value="foo",
+            source="crm",
+            recorded_at=datetime.now(tz=timezone.utc),
+        )
+        req = req.model_copy(update={"facts_to_verify": [fact]})
+        result = await checker.check(req)
+
+        assert result.any_changed is False
+        assert len(result.results) == 1
+        res = result.results[0]
+        assert res.status == FreshnessStatus.UNAVAILABLE
+        assert res.live_value is None
+
+    @pytest.mark.asyncio
+    async def test_freshness_handles_network_error_gracefully(self) -> None:
+        err_transport = httpx.MockTransport(lambda req: httpx.Response(500))
+        err_client = httpx.AsyncClient(transport=err_transport, base_url="http://localhost:8001")
+        checker = FreshnessChecker(client=err_client)
+        req = make_recap_request()
+        result = await checker.check(req)
+
+        assert result.any_changed is False
+        for res in result.results:
+            assert res.status == FreshnessStatus.UNAVAILABLE
+
+    @pytest.mark.asyncio
+    async def test_freshness_empty_facts_to_verify(self, mock_client) -> None:
+        checker = FreshnessChecker(client=mock_client)
+        req = make_recap_request()
+        req = req.model_copy(update={"facts_to_verify": []})
+        result = await checker.check(req)
+
+        assert result.any_changed is False
+        assert result.results == []
+
+    @pytest.mark.asyncio
+    async def test_freshness_concurrent_batch_facts(self, mock_client) -> None:
+        set_fact_value("price_usd", "$420")
+        set_fact_value("ticket_status", "closed")
+        checker = FreshnessChecker(client=mock_client)
+        req = make_recap_request()
+        now = datetime.now(tz=timezone.utc)
+        facts = [
+            TimeSensitiveFact(key="price_usd", label="Unit price", value="$400", source="pricing", recorded_at=now),
+            TimeSensitiveFact(key="ticket_status", label="Ticket status", value="open", source="jira", recorded_at=now),
+        ]
+        req = req.model_copy(update={"facts_to_verify": facts})
+        result = await checker.check(req)
+
+        assert result.any_changed is True
+        assert len(result.results) == 2
+        price_res = next(r for r in result.results if r.key == "price_usd")
+        ticket_res = next(r for r in result.results if r.key == "ticket_status")
+        assert price_res.status == FreshnessStatus.CHANGED
+        assert ticket_res.status == FreshnessStatus.CHANGED
+
+    @pytest.mark.asyncio
+    async def test_freshness_aclose(self, mock_client) -> None:
+        checker = FreshnessChecker(client=mock_client)
+        await checker.aclose()
+        assert checker._client is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. RecapTextBuilder — Advanced & Edge Case tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestRecapTextBuilderAdvanced:
+    builder = RecapTextBuilder()
+
+    def test_builder_auto_wraps_alphanumeric_ticket_id(self) -> None:
+        req = make_recap_request()
+        req.summary.open_items = ["Resolve ticket INC-9902 before call."]
+        freshness = _make_freshness(req, changed=False)
+        text = self.builder.build(req.summary, freshness, RecapUrgency.STANDARD)
+
+        assert "spell(INC-9902)" in text
+        violations = RimePromptValidator().validate(text)
+        assert violations == []
+
+    def test_builder_multiple_changed_facts(self) -> None:
+        req = make_recap_request()
+        freshness = FreshnessResult(
+            request_id=req.request_id,
+            thread_id=req.thread_id,
+            results=[
+                FactCheckResult(
+                    key="price_usd",
+                    label="Unit price",
+                    cached_value="$400",
+                    live_value="$420",
+                    status=FreshnessStatus.CHANGED,
+                    checked_at=datetime.now(tz=timezone.utc),
+                    latency_ms=10,
+                ),
+                FactCheckResult(
+                    key="tier",
+                    label="Tier status",
+                    cached_value="Silver",
+                    live_value="Gold",
+                    status=FreshnessStatus.CHANGED,
+                    checked_at=datetime.now(tz=timezone.utc),
+                    latency_ms=12,
+                ),
+            ],
+            any_changed=True,
+            completed_at=datetime.now(tz=timezone.utc),
+        )
+        text = self.builder.build(req.summary, freshness, RecapUrgency.STANDARD)
+        assert "$400" in text and "$420" in text
+        assert "Silver" in text and "Gold" in text
+        violations = RimePromptValidator().validate(text)
+        assert violations == []
+
+    def test_builder_empty_open_items_and_commitments(self) -> None:
+        req = make_recap_request()
+        req.summary.open_items = []
+        req.summary.commitments = []
+        freshness = _make_freshness(req, changed=False)
+        text = self.builder.build(req.summary, freshness, RecapUrgency.STANDARD)
+
+        assert text
+        assert req.summary.headline[:20] in text
+        violations = RimePromptValidator().validate(text)
+        assert violations == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. VoicePipeline — End-to-End Async Orchestration tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestVoicePipelineEndToEnd:
+    @pytest.fixture
+    def live_pipeline(self):
+        transport = httpx.ASGITransport(app=mock_freshness_app)
+        client = httpx.AsyncClient(transport=transport, base_url="http://localhost:8001")
+        freshness = FreshnessChecker(client=client)
+        builder = RecapTextBuilder()
+        tts = RimeTtsClient(speaker="sol", private_track_id="continuum-private-whisper")
+        return VoicePipeline(freshness_checker=freshness, text_builder=builder, tts_client=tts)
+
+    @pytest.mark.asyncio
+    async def test_pipeline_e2e_changed_fact_scenario(self, live_pipeline) -> None:
+        set_fact_value("price_usd", "$420")
+        req = make_recap_request(urgency=RecapUrgency.STANDARD)
+        tts_req = await live_pipeline.run(req)
+
+        assert tts_req.request_id == req.request_id
+        assert tts_req.session_id == req.session_id
+        assert tts_req.private_track_id == "continuum-private-whisper"
+        assert tts_req.is_interruptible is True
+        assert tts_req.model == RimeModel.CODA
+        assert tts_req.time_scale_factor == 0.85
+
+        assert "Heads up — Unit price was $400, it's now $420." in tts_req.text
+        assert "Your move" in tts_req.text
+
+        violations = RimePromptValidator().validate(tts_req.text)
+        assert violations == []
+
+    @pytest.mark.asyncio
+    async def test_pipeline_e2e_unchanged_fact_scenario(self, live_pipeline) -> None:
+        set_fact_value("price_usd", "$400")
+        req = make_recap_request(urgency=RecapUrgency.STANDARD)
+        tts_req = await live_pipeline.run(req)
+
+        assert "Heads up" not in tts_req.text
+        assert tts_req.model == RimeModel.CODA
+        violations = RimePromptValidator().validate(tts_req.text)
+        assert violations == []
+
+    @pytest.mark.asyncio
+    async def test_pipeline_e2e_ticket_spell_selects_mist_v2(self, live_pipeline) -> None:
+        set_fact_value("price_usd", "$400")
+        req = make_recap_request(urgency=RecapUrgency.STANDARD)
+        req.summary.open_items = ["Check ticket TKT-8841 before proceeding."]
+        tts_req = await live_pipeline.run(req)
+
+        assert "spell(TKT-8841)" in tts_req.text
+        assert tts_req.model == RimeModel.MIST_V2
+        assert tts_req.speed_alpha is not None
+        assert tts_req.time_scale_factor is None
+
+        violations = RimePromptValidator().validate(tts_req.text)
+        assert violations == []
+
+    @pytest.mark.asyncio
+    async def test_pipeline_e2e_urgency_headline_only(self, live_pipeline) -> None:
+        req = make_recap_request(urgency=RecapUrgency.HEADLINE_ONLY)
+        tts_req = await live_pipeline.run(req)
+
+        assert tts_req.time_scale_factor == 0.75
+        assert tts_req.model == RimeModel.CODA
+        violations = RimePromptValidator().validate(tts_req.text)
+        assert violations == []
+
+    @pytest.mark.asyncio
+    async def test_pipeline_e2e_backend_failure_resilience(self) -> None:
+        err_transport = httpx.MockTransport(lambda req: httpx.Response(500))
+        err_client = httpx.AsyncClient(transport=err_transport, base_url="http://localhost:8001")
+        freshness = FreshnessChecker(client=err_client)
+        pipeline = VoicePipeline(freshness_checker=freshness)
+
+        req = make_recap_request()
+        tts_req = await pipeline.run(req)
+        assert tts_req.text
+        assert tts_req.private_track_id == "continuum-private-whisper"
+        await pipeline.aclose()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_aclose(self, live_pipeline) -> None:
+        await live_pipeline.aclose()
+
