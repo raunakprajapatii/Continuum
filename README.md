@@ -82,10 +82,12 @@ Audio → Transcript → Memory → Recap Text → Speech → Private Track
 
 ### Prerequisites
 
-- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) (fast Python manager — recommended)
 - A [Rime API key](https://rime.ai)
 - A [LiveKit Cloud](https://cloud.livekit.io) account (or self-hosted LiveKit)
 - A [Deepgram](https://deepgram.com) API key
+
+> **Python version matters.** The LiveKit stack (`livekit-plugins-rime`) requires **Python 3.12 or earlier** — it does not support Python 3.13/3.14. If your system Python is 3.14, the commands below install 3.12 into a local `.venv` automatically.
 
 ### Quick Start
 
@@ -94,22 +96,93 @@ Audio → Transcript → Memory → Recap Text → Speech → Private Track
 git clone https://github.com/raunakprajapatii/Continuum.git
 cd Continuum
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 2. Create a Python 3.12 virtual environment with uv
+#    (installs CPython 3.12 on first run if your system Python is newer)
+uv python install 3.12          # safe no-op if 3.12 is already available
+uv venv --python 3.12 .venv
 
-# 3. Configure environment
+# 3. Install ALL dependencies into the venv
+#    (on Windows: .venv\Scripts\python.exe)
+uv pip install --python .venv -r requirements.txt
+
+# 4. Configure environment
 cp .env.example .env
 # Edit .env and fill in your API keys
 
-# 4. Start the mock freshness API (separate terminal)
+# 5. Activate the venv (or prefix every command with .venv/bin/python)
+source .venv/bin/activate       # Windows Git Bash / macOS / Linux
+# Windows PowerShell:  .\.venv\Scripts\Activate.ps1
+
+# 6. Start the mock freshness API (separate terminal)
 python -m mocks.mock_freshness
 
-# 5. Run with mocks (no external services needed)
+# 7. Run with mocks (no external services needed)
 USE_MOCKS=true python -m modules.transport.main
 
-# 6. Run evaluation tests
+# 8. Run evaluation tests
 USE_MOCKS=true pytest evaluation/ -v
 ```
+
+### Interactive demo dashboard (live website simulation)
+
+The web app (`web/`) is a staged, interactive version of the demo-day script
+(`Continuum_Demo_Website_Script.pdf`). It walks through the full experience
+end to end:
+
+1. **Call one (yesterday)** — Z (a clearly-labelled simulated caller) talks to
+   *you*; your replies are transcribed **live through Deepgram** via the
+   backend, then the line drops mid-sentence.
+2. **Thread memory** — the interrupted conversation is extracted and persisted
+   to the Thread Memory Store.
+3. **Callback (next morning)** — Z rings in. During the ring window the recap
+   is generated, the freshness check runs ($400 → $420) and **Rime** speaks the
+   recap on the private whisper track only.
+4. **Barge-in or listen** — you either let the full recap play (then answer),
+   or interrupt with *“I know, just pick up the call”* (auto-answer) vs a
+   generic *“Hold on”* (stop-only) — measured and logged live on screen.
+5. **Connected** — you pick up already caught up; the caller never hears the
+   recap.
+
+Run it with the real providers (this is the judged path):
+
+```bash
+# terminal 1 — mock freshness data source (port 8001)
+python -m mocks.mock_freshness
+
+# terminal 2 — dashboard control surface (port 8000)
+# .env must have USE_MOCKS=false plus RIME_API_KEY + DEEPGRAM_API_KEY
+# (make sure your shell does NOT export USE_MOCKS=true — the process env
+#  overrides .env in pydantic-settings)
+USE_MOCKS=false uvicorn dashboard.server:app --port 8000
+
+# terminal 3 — Vite dev server (port 5173)
+cd web && pnpm install && pnpm dev
+# no pnpm? node_modules is committed-checked-in already, so either works:
+#   cd web && node_modules/.bin/vite
+```
+
+Open http://localhost:5173 in Chrome and press **Start the simulation**.
+
+> **Note on the LiveKit transport path** (`modules/transport/`): it needs the
+> venv Python 3.12 (LiveKit plugins refuse 3.13+). Run it as
+> `USE_MOCKS=false python -m modules.transport.main` from inside the venv.
+> The dashboard demo above does **not** need LiveKit — it calls the Rime HTTP
+> API directly.
+
+Behaviour guarantees enforced by the UI:
+
+- **Rime is the only recap voice.** The whisper audio comes from
+  `POST /api/rime/tts` (backend → Rime API). If Rime is unreachable the demo
+  stops with a visible error — it never substitutes `speechSynthesis` for the
+  recap. `speechSynthesis` is used **only** for the simulated caller (Z),
+  labelled on screen.
+- **Dual-track isolation** is visualised live: caller lane = ringback/live
+  call, whisper lane = Rime recap. `X-Continuum-Track` is checked by the UI on
+  every recap response.
+- **Mocks / rehearsal mode:** with `USE_MOCKS=true` the dashboard boots but
+  Rime + Deepgram are gated (the readiness card explains what to change). The
+  conversation can still be rehearsed with typed suggested replies and the
+  simulated caller voice.
 
 ### Environment Variables
 

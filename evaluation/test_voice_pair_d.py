@@ -218,11 +218,14 @@ class TestRimeTtsClient:
         tts = client.make_request(req, "Z called. Your move: call finance.")
         assert tts.model == RimeModel.CODA
 
-    def test_selects_mist_v2_for_spell_text(self) -> None:
+    def test_selects_coda_for_spell_text(self) -> None:
+        # Per RIME_VOICE_DESIGN.md § "Model Selection on spell(...)", coda is the
+        # primary model and handles spell() markers natively — MIST_V2 is only
+        # for inline bracket phonemes, which this pipeline never emits.
         req = make_recap_request()
         client = self._make_client()
         tts = client.make_request(req, "Follow up on spell(XYZ-123). Your move: call finance.")
-        assert tts.model == RimeModel.MIST_V2
+        assert tts.model == RimeModel.CODA
 
     def test_raises_on_empty_text(self) -> None:
         req = make_recap_request()
@@ -244,12 +247,15 @@ class TestRimeTtsClient:
         assert tts.time_scale_factor is not None
         assert tts.speed_alpha is None  # CODA uses time_scale_factor, not speed_alpha
 
-    def test_speed_alpha_set_for_mist_v2(self) -> None:
+    def test_time_scale_factor_set_for_spell_text(self) -> None:
+        # spell() text stays on coda (see RIME_VOICE_DESIGN.md), so the speed
+        # knob is time_scale_factor, never speed_alpha (MIST_V2-only).
         req = make_recap_request()
         client = self._make_client()
         tts = client.make_request(req, "Ticket spell(XYZ-123). Your move: call back.")
-        assert tts.speed_alpha is not None
-        assert tts.time_scale_factor is None
+        assert tts.model == RimeModel.CODA
+        assert tts.time_scale_factor is not None
+        assert tts.speed_alpha is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -584,16 +590,18 @@ class TestVoicePipelineEndToEnd:
         assert violations == []
 
     @pytest.mark.asyncio
-    async def test_pipeline_e2e_ticket_spell_selects_mist_v2(self, live_pipeline) -> None:
+    async def test_pipeline_e2e_ticket_spell_selects_coda(self, live_pipeline) -> None:
         set_fact_value("price_usd", "$400")
         req = make_recap_request(urgency=RecapUrgency.STANDARD)
         req.summary.open_items = ["Check ticket TKT-8841 before proceeding."]
         tts_req = await live_pipeline.run(req)
 
         assert "spell(TKT-8841)" in tts_req.text
-        assert tts_req.model == RimeModel.MIST_V2
-        assert tts_req.speed_alpha is not None
-        assert tts_req.time_scale_factor is None
+        # coda is the primary model per RIME_VOICE_DESIGN.md — it accepts
+        # spell() natively and hosts the Continuum whisper voice (eyre).
+        assert tts_req.model == RimeModel.CODA
+        assert tts_req.time_scale_factor is not None
+        assert tts_req.speed_alpha is None
 
         violations = RimePromptValidator().validate(tts_req.text)
         assert violations == []

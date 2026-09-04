@@ -15,11 +15,13 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from dashboard import sim_engine, stt_bridge
+from modules.signal.voice_command import VoiceCommandDetector
 from shared.config import settings
 
 
@@ -73,6 +75,98 @@ _DEMO_RECAP = (
 )
 
 
+# ── Rime synthesis helpers (used by the private-track audio endpoints) ────────
+
+
+class RimeTtsBody(BaseModel):
+    """Request body for generic Rime synthesis on the private track."""
+
+    text: str = Field(..., min_length=1, max_length=3000)
+    speaker: str | None = Field(
+        default=None, description="Override the voice ID from the live Rime catalog."
+    )
+    model: str | None = Field(
+        default=None, description="Override the model ID (coda / mist_v2 / mist_v3)."
+    )
+
+
+class _RimeSynthesis:
+    """Small result wrapper for a successful Rime HTTP call."""
+
+    def __init__(self, content: bytes, media_type: str) -> None:
+        self.content = content
+        self.media_type = media_type
+
+
+def _rime_language_code(value: str) -> str:
+    """
+    Map a BCP-47-ish language to the code Rime accepts in TTS requests.
+
+    Rime's mist family requires 3-letter codes (``eng``); the shorter form
+    (``en``) is rejected with "Language 'en' is not supported". coda accepts
+    both, so normalising to ``eng`` is safe for every model.
+    """
+    normalized = (value or "").strip().lower()
+    if normalized == "en":
+        return "eng"
+    return normalized or "eng"
+
+
+async def _synthesize_rime(
+    text: str,
+    *,
+    speaker: str | None = None,
+    model: str | None = None,
+) -> _RimeSynthesis:
+    """
+    Call the Rime TTS API for ``text``.
+
+    Raises HTTPException:
+      503 — mock mode is active (Rime is intentionally unavailable)
+      502 — Rime was unreachable or declined the request
+
+    No other TTS provider is ever substituted (AGENTS.md Rule 2).
+    """
+    if settings.use_mocks:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Rime audio is unavailable while USE_MOCKS=true. "
+                "Set USE_MOCKS=false (and RIME_API_KEY in .env) to enable "
+                "the live Rime recap path."
+            ),
+        )
+    payload = {
+        "text": text,
+        "modelId": (model or settings.rime_default_model).replace("_", ""),
+        "speaker": speaker or settings.rime_default_speaker,
+        "lang": _rime_language_code(settings.rime_default_language),
+        "samplingRate": 22050,
+        "audioFormat": "wav",
+        "timeScaleFactor": settings.rime_time_scale_factor,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.rime_api_key}",
+        "Accept": "audio/wav",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            upstream = await client.post(settings.rime_api_url, headers=headers, json=payload)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Rime could not be reached: {exc}"
+        ) from exc
+    if upstream.is_error:
+        raise HTTPException(status_code=502, detail="Rime declined the TTS request.")
+    content_type = upstream.headers.get("content-type", "audio/wav").split(";")[0]
+    if not content_type.startswith("audio/"):
+        raise HTTPException(
+            status_code=502, detail="Rime returned an unexpected response type."
+        )
+    return _RimeSynthesis(content=upstream.content, media_type=content_type)
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "audio_policy": "private-track-only"}
@@ -117,6 +211,219 @@ async def private_recap_audio() -> Response:
         media_type=content_type,
         headers={"X-Continuum-Track": settings.private_track_id},
     )
+
+
+@app.post("/api/rime/tts")
+async def rime_tts(body: RimeTtsBody) -> Response:
+    """
+    Synthesize arbitrary spoken text with Rime for the user-private track.
+
+    Used by the interactive demo simulation to speak the freshly generated
+    recap.  The response carries ``X-Continuum-Track`` so the dashboard can
+    verify the audio is bound to the private whisper track only.
+    """
+    synth = await _synthesize_rime(body.text, speaker=body.speaker, model=body.model)
+    return Response(
+        content=synth.content,
+        media_type=synth.media_type,
+        headers={"X-Continuum-Track": settings.private_track_id},
+    )
+
+
+# ── Capabilities & demo simulation endpoints ───────────────────────────────────
+
+_voice_command_detector = VoiceCommandDetector()
+
+
+@app.get("/api/capabilities")
+async def capabilities() -> dict:
+    """
+    Report which live providers are usable right now so the demo UI can guide
+    the presenter (provider badge values come from here as well).
+    """
+    rime_enabled = bool(settings.rime_api_key) and not settings.rime_api_key.startswith(
+        "YOUR_"
+    ) and not settings.use_mocks
+    # Report the voice/model the RimeTtsClient actually resolves to (the recap
+    # pipeline swaps the placeholder "sol" for the Continuum optimal voice).
+    from modules.voice.rime_tts_client import DEFAULT_CONTINUUM_SPEAKER
+
+    effective_speaker = (
+        DEFAULT_CONTINUUM_SPEAKER
+        if settings.rime_default_speaker in ("sol", "default", "")
+        else settings.rime_default_speaker
+    )
+    effective_model = settings.rime_default_model
+    stt_available = stt_bridge.stt_available()
+
+    freshness = {
+        "enabled": False,
+        "price_usd": None,
+        "endpoint": settings.mock_freshness_api_url,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            response = await client.get(f"{settings.mock_freshness_api_url}/facts/price_usd")
+        if response.is_success:
+            freshness["enabled"] = True
+            freshness["price_usd"] = (response.json() or {}).get("value")
+    except httpx.HTTPError:
+        pass  # offline -> demo UI shows a setup hint
+
+    return {
+        "use_mocks": settings.use_mocks,
+        "rime": {
+            "enabled": rime_enabled,
+            "model": effective_model,
+            "speaker": effective_speaker,
+            "language": settings.rime_default_language,
+            "endpoint": settings.rime_api_url,
+            "time_scale_factor": settings.rime_time_scale_factor,
+            "private_track_id": settings.private_track_id,
+        },
+        "stt": {
+            "enabled": stt_available,
+            "provider": settings.stt_provider,
+            "detail": (
+                ""
+                if stt_available
+                else (
+                    "USE_MOCKS=true — set USE_MOCKS=false for live Deepgram STT."
+                    if settings.use_mocks
+                    else "DEEPGRAM_API_KEY missing in .env."
+                )
+            ),
+        },
+        "freshness": freshness,
+        "ready": rime_enabled and stt_available and freshness["enabled"],
+    }
+
+
+class SimTurnBody(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=120)
+    speaker: str = Field(..., description="USER or CALLER")
+    text: str = Field(..., min_length=1, max_length=1000)
+
+
+class SimCallEndedBody(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=120)
+    caller_id: str = Field(..., min_length=1, max_length=120)
+    caller_name: str | None = Field(default=None, max_length=80)
+    interrupted: bool = Field(default=True)
+
+
+class SimRecapBody(BaseModel):
+    caller_id: str = Field(..., min_length=1, max_length=120)
+    session_id: str = Field(..., min_length=1, max_length=120)
+    ring_window_s: float = Field(default=25.0, ge=5.0, le=60.0)
+
+
+class SimResetBody(BaseModel):
+    caller_id: str = Field(..., min_length=1, max_length=120)
+    session_ids: list[str] = Field(default_factory=list)
+
+
+class BargeIntentBody(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500)
+
+
+@app.post("/api/sim/turn", status_code=202)
+async def sim_turn(body: SimTurnBody) -> dict:
+    """Record one final transcript turn for the demo conversation."""
+    if body.speaker.upper() not in ("USER", "CALLER"):
+        raise HTTPException(status_code=422, detail="speaker must be USER or CALLER")
+    await sim_engine.ensure_ready()
+    await sim_engine.ingest_turn(body.session_id, body.speaker, body.text)
+    return {"ok": True}
+
+
+@app.post("/api/sim/call-ended")
+async def sim_call_ended(body: SimCallEndedBody) -> dict:
+    """Extract + persist the ThreadSummary for the ended demo call."""
+    await sim_engine.ensure_ready()
+    try:
+        summary = await sim_engine.end_demo_call(
+            session_id=body.session_id,
+            caller_id=body.caller_id,
+            interrupted=body.interrupted,
+            caller_name=body.caller_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return summary.model_dump(mode="json")
+
+
+@app.get("/api/sim/thread")
+async def sim_thread(caller_id: str) -> dict:
+    """Return the stored ThreadSummary for a caller (404 when none)."""
+    caller_id = caller_id.strip()  # '+' in query strings may decode to a space
+    await sim_engine.ensure_ready()
+    summary = await sim_engine.get_thread(caller_id)
+    if summary is None:
+        raise HTTPException(
+            status_code=404, detail=f"No stored thread for caller {caller_id!r}."
+        )
+    return summary.model_dump(mode="json")
+
+
+@app.post("/api/sim/recap")
+async def sim_recap(body: SimRecapBody) -> dict:
+    """
+    Build the spoken recap for a returning caller (Brain -> Voice & Facts).
+    The caller can then fetch the audio via ``POST /api/rime/tts``.
+    """
+    await sim_engine.ensure_ready()
+    try:
+        return await sim_engine.build_reconnect_recap(
+            caller_id=body.caller_id,
+            session_id=body.session_id,
+            ring_window_s=body.ring_window_s,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/sim/barge-intent")
+async def sim_barge_intent(body: BargeIntentBody) -> dict:
+    """Classify a barge-in utterance using the real VoiceCommandDetector."""
+    result = _voice_command_detector.detect(body.text)
+    return {
+        "intent": result.intent.value,
+        "matched_phrase": result.matched_phrase,
+        "confidence": result.confidence,
+        "raw_text": result.raw_text,
+    }
+
+
+@app.post("/api/sim/reset", status_code=200)
+async def sim_reset(body: SimResetBody) -> dict:
+    """Reset the demo thread to a clean baseline between takes."""
+    await sim_engine.ensure_ready()
+    await sim_engine.reset_thread(body.caller_id, body.session_ids)
+    return {"ok": True}
+
+
+# ── Live STT (browser mic -> Deepgram) ────────────────────────────────────────
+
+
+@app.websocket("/api/stt/stream")
+async def stt_stream(ws: WebSocket, session_id: str = "demo") -> None:
+    """
+    Browser mic bridge: raw PCM16 16 kHz audio up, transcript JSON down.
+
+    Messages down:
+        {type: "ready"} | {type: "transcript", speaker, text, is_final} | {type: "error"}
+    """
+    await ws.accept()
+    try:
+        await stt_bridge.run_stt_relay(ws, session_id)
+    except WebSocketDisconnect:
+        pass  # presenter closed the tab / clicked away
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
 
 
 @app.post("/api/events", status_code=202)

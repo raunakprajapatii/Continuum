@@ -9,6 +9,9 @@ dist/
 *.egg-info/
 .eggs/
 
+# Node
+node_modules/
+
 # Virtual environments
 .venv/
 venv/

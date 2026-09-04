@@ -41,8 +41,11 @@ logger = logging.getLogger(__name__)
 # "eyre" (Female 30–50, American, warm, calm, easy to listen to).
 DEFAULT_CONTINUUM_SPEAKER = "eyre"
 
-# spell() is embedded in text via Mist v2 / Mist v3 inline syntax.
-# If the text contains spell() calls, we use MIST_V2 by default for reliable letter-by-letter synthesis.
+# spell() is Rime inline syntax supported natively by coda / mist v3 (see
+# RIME_VOICE_DESIGN.md § "Model Selection on spell(...)"). coda is the primary
+# model: it accepts all recap text naturally and hosts the documented
+# Continuum whisper voice (eyre). MIST_V2 is only required for inline bracket
+# phonemes, which Continuum never emits, so we no longer force it.
 _SPELL_MARKER = "spell("
 
 # Urgency → time_scale_factor mapping per blueprint § 12 and RIME_RESEARCH.md.
@@ -160,14 +163,14 @@ class RimeTtsClient:
         Select the Rime model.
 
         If a default_model override was provided, it takes precedence.
-        Otherwise:
-        MIST_V2 is required when the text contains ``spell(...)`` markers.
-        CODA is used for all other recap text (most common case).
+        Otherwise CODA is always used — it accepts all recap text naturally,
+        including ``spell(...)`` markers, and hosts the Continuum whisper voice
+        ``eyre`` (see RIME_VOICE_DESIGN.md § "Model Selection on spell(...)").
+        MIST_V2 was previously forced for spell() text but is only needed for
+        inline bracket phonemes, which this pipeline never emits.
         """
         if self._default_model:
             return self._default_model
-        if _SPELL_MARKER in text:
-            return RimeModel.MIST_V2
         return RimeModel.CODA
 
     @staticmethod

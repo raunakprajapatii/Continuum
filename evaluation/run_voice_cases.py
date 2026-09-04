@@ -96,7 +96,7 @@ async def run_scenario_1():
 
 
 async def run_scenario_2():
-    print_header("Test Case 2: Support Ticket with spell() & Mist v2 Model")
+    print_header("Test Case 2: Support Ticket with spell() & Coda Model")
     print("  Context: Open item contains ticket 'TKT-9941'. Rule 6 requires spell().")
 
     set_fact_value("price_usd", "$400")
@@ -122,7 +122,8 @@ async def run_scenario_2():
     print_field("Execution Latency", f"{elapsed_ms} ms", GREEN)
 
     assert "spell(TKT-9941)" in tts.text
-    assert tts.model == RimeModel.MIST_V2
+    # coda is the primary model per RIME_VOICE_DESIGN.md — spell() is native.
+    assert tts.model == RimeModel.CODA
     assert not violations
 
 

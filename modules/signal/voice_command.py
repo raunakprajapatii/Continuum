@@ -7,6 +7,7 @@ Listens for user speech during the RINGING window when an AI recap is playing in
 the user's private whisper channel. Detects verbal commands such as:
   - "I know, just pick up the call" / "Answer" -> ANSWER_CALL (stops recap & connects call)
   - "Skip" / "I remember" / "Got it"           -> DISMISS_RECAP (stops recap, leaves ringing)
+  - "Hold on" / "Wait a sec" / "I know this"    -> DISMISS_RECAP (stop-only, no auto-answer)
 """
 
 from __future__ import annotations
@@ -63,6 +64,9 @@ class VoiceCommandDetector:
         r"\b(?:i\s+know|i\s+remember|got\s+it)\b",
         r"\b(?:stop|quiet|shut\s+up)(?:\s+talking)?\b",
         r"\bnevermind\b",
+        # Generic interrupt: pause/stop the recap but do NOT auto-answer.
+        r"\bhold\s+on\b",
+        r"\b(?:wait|one\s+sec(?:ond)?|hang\s+on)(?:\b|,)\s*",
     ]
 
     def __init__(self) -> None:
