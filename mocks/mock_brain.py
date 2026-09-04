@@ -74,12 +74,13 @@ def make_recap_request(
     The price_usd fact ($400) is included in facts_to_verify so the
     FreshnessChecker will query the mock API and discover it's now $420.
     """
+    summary = _MOCK_SUMMARY.model_copy(deep=True)
     return RecapRequest(
         request_id=str(uuid.uuid4()),
         session_id=MOCK_SESSION_ID,
         thread_id=MOCK_THREAD_ID,
-        summary=_MOCK_SUMMARY,
-        facts_to_verify=_MOCK_SUMMARY.time_sensitive_facts,
+        summary=summary,
+        facts_to_verify=list(summary.time_sensitive_facts),
         urgency=urgency,
         estimated_ring_window_seconds=estimated_ring_window_seconds,
         created_at=datetime.now(tz=timezone.utc),
