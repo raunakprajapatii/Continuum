@@ -43,8 +43,9 @@ where = ["."]
 include = ["shared*", "mocks*", "modules*", "evaluation*"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 asyncio_mode = "auto"
-testpaths = ["evaluation"]
+testpaths = ["evaluation", "tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]

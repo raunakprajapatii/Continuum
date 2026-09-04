@@ -34,7 +34,7 @@ async def test_recap_contains_only_correct_thread_content(
 ) -> None:
     """
     Verify that a recap generated for thread Z contains no content
-    from a concurrent thread Y using the real ThreadMemoryStore and BrainService.
+    from a concurrent thread Y.
     """
     from datetime import datetime, timezone
     from modules.brain import BrainService, ThreadMemoryStore
