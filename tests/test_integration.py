@@ -57,7 +57,9 @@ from modules.brain.service import BrainService
 from modules.brain.store import ThreadMemoryStore
 from modules.signal.caller_matcher import CallerMatcher, normalise_caller_id
 from modules.signal.reconnect_detector import ReconnectDecision, ReconnectDetector
+from modules.signal.voice_command import VoiceCommandDetector, VoiceCommandIntent
 from modules.transport.audio_ducking import AudioDuckingController
+from modules.transport.engine import TransportEngine
 from modules.transport.exceptions import SessionStateError, TrackFencingViolationError
 from modules.transport.session_manager import CallSessionManager
 from modules.transport.whisper_channel import PrivateWhisperChannel
@@ -1048,6 +1050,72 @@ class TestINTG16_BargeIn:
         """Calling interrupt() when nothing is playing should return 0.0 without error."""
         result = await whisper_channel.interrupt(reason="no_playback")
         assert result == 0.0
+
+    async def test_voice_command_barge_in_and_auto_pickup(self):
+        """
+        User verbally says 'I know, just pick up the call' while recap is playing during RINGING.
+        Recap must stop immediately (<500ms) and call must automatically transition to CONNECTED.
+        """
+        engine = TransportEngine(use_mocks=True)
+        # 1. Ring incoming call
+        await engine.session_manager.transition_to(CallState.RINGING, caller_id=CALLER_Z)
+        assert engine.session_manager.current_state == CallState.RINGING
+
+        # 2. Start recap playback
+        tts = TtsRequest(
+            request_id=str(uuid.uuid4()),
+            session_id=engine.session_manager.session_id,
+            thread_id="thread-voice-cmd",
+            text="Recap audio playing in user ear during ring window...",
+            speaker="sol",
+            private_track_id=PRIVATE_TRACK,
+            created_at=datetime.now(tz=timezone.utc),
+        )
+        play_task = asyncio.create_task(engine.whisper_channel.play_recap(tts))
+        await asyncio.sleep(0.05)
+        assert engine.whisper_channel.is_playing is True
+
+        # 3. User interrupts verbally: 'I know, just pick up the call'
+        user_turn = make_transcript_event("I know, just pick up the call", speaker=Speaker.USER)
+        result = await engine.handle_user_voice_command(user_turn)
+
+        assert result.intent == VoiceCommandIntent.ANSWER_CALL
+        metrics = await play_task
+        assert metrics.interrupted is True
+        assert engine.whisper_channel.is_playing is False
+        assert engine.session_manager.current_state == CallState.CONNECTED
+
+    async def test_voice_command_dismiss_recap_leaves_ringing(self):
+        """
+        User verbally says 'skip' while recap is playing during RINGING.
+        Recap must stop, but call remains in RINGING state awaiting manual user action.
+        """
+        engine = TransportEngine(use_mocks=True)
+        await engine.session_manager.transition_to(CallState.RINGING, caller_id=CALLER_Z)
+
+        tts = TtsRequest(
+            request_id=str(uuid.uuid4()),
+            session_id=engine.session_manager.session_id,
+            thread_id="thread-voice-cmd-2",
+            text="Long recap audio playing...",
+            speaker="sol",
+            private_track_id=PRIVATE_TRACK,
+            created_at=datetime.now(tz=timezone.utc),
+        )
+        play_task = asyncio.create_task(engine.whisper_channel.play_recap(tts))
+        await asyncio.sleep(0.05)
+        assert engine.whisper_channel.is_playing is True
+
+        # User says 'skip'
+        user_turn = make_transcript_event("skip", speaker=Speaker.USER)
+        result = await engine.handle_user_voice_command(user_turn)
+
+        assert result.intent == VoiceCommandIntent.DISMISS_RECAP
+        metrics = await play_task
+        assert metrics.interrupted is True
+        assert engine.whisper_channel.is_playing is False
+        # Crucial check: call is still ringing, NOT answered yet
+        assert engine.session_manager.current_state == CallState.RINGING
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

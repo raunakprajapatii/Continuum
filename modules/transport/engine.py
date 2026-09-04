@@ -16,12 +16,17 @@ import asyncio
 import logging
 from typing import Any, Callable, Dict, Optional
 
+from modules.signal.voice_command import (
+    VoiceCommandDetector,
+    VoiceCommandIntent,
+    VoiceCommandResult,
+)
 from modules.transport.audio_ducking import AudioDuckingController, AudioLevels
 from modules.transport.exceptions import TrackFencingViolationError, TransportError
 from modules.transport.session_manager import CallSessionManager
 from modules.transport.whisper_channel import PlaybackMetrics, PrivateWhisperChannel
 from shared.config import settings
-from shared.schemas import CallState, CallStateEvent, TtsRequest
+from shared.schemas import CallState, CallStateEvent, TranscriptEvent, TtsRequest
 
 logger = logging.getLogger("continuum.transport.engine")
 
@@ -49,6 +54,7 @@ class TransportEngine:
             whisper_channel=self._whisper_channel,
             use_mocks=self._use_mocks,
         )
+        self._voice_command_detector = VoiceCommandDetector()
 
         self._is_running = False
         self._room: Optional[Any] = None
@@ -56,6 +62,10 @@ class TransportEngine:
     @property
     def session_manager(self) -> CallSessionManager:
         return self._session_manager
+
+    @property
+    def voice_command_detector(self) -> VoiceCommandDetector:
+        return self._voice_command_detector
 
     @property
     def whisper_channel(self) -> PrivateWhisperChannel:
@@ -136,3 +146,41 @@ class TransportEngine:
     async def interrupt_recap(self, reason: str = "barge_in") -> float:
         """Interrupt active recap immediately (< 500ms)."""
         return await self._whisper_channel.interrupt(reason=reason)
+
+    async def handle_user_voice_command(
+        self,
+        text_or_event: str | TranscriptEvent,
+    ) -> VoiceCommandResult:
+        """
+        Process user speech during the ring window.
+
+        - If ANSWER_CALL (e.g. "I know, just pick up", "Answer"):
+            Interrupts active whisper recap and transitions call to CONNECTED.
+        - If DISMISS_RECAP (e.g. "Skip", "I remember"):
+            Interrupts active whisper recap only; phone continues ringing.
+        - If IGNORE:
+            No action taken.
+        """
+        if isinstance(text_or_event, TranscriptEvent):
+            text = text_or_event.text
+        else:
+            text = str(text_or_event)
+
+        result = self._voice_command_detector.detect(text)
+
+        if result.intent == VoiceCommandIntent.ANSWER_CALL:
+            logger.info(
+                "Voice command ANSWER_CALL detected ('%s'); interrupting recap and answering call",
+                text,
+            )
+            await self.interrupt_recap(reason="voice_command_answer")
+            if self._session_manager.current_state == CallState.RINGING:
+                await self._session_manager.transition_to(CallState.CONNECTED)
+        elif result.intent == VoiceCommandIntent.DISMISS_RECAP:
+            logger.info(
+                "Voice command DISMISS_RECAP detected ('%s'); interrupting recap",
+                text,
+            )
+            await self.interrupt_recap(reason="voice_command_dismiss")
+
+        return result

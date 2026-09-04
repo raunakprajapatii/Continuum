@@ -17,6 +17,7 @@ from .caller_matcher import CallerMatchEntry, CallerMatcher, normalise_caller_id
 from .reconnect_detector import ReconnectDecision, ReconnectDetector
 from .signal_agent import SignalAgent
 from .stt_streamer import STT_CONFIDENCE_THRESHOLD, StreamingSTT
+from .voice_command import VoiceCommandDetector, VoiceCommandIntent, VoiceCommandResult
 
 __all__ = [
     # Core agent
@@ -31,4 +32,8 @@ __all__ = [
     "CallerMatcher",
     "CallerMatchEntry",
     "normalise_caller_id",
+    # Voice command / hands-free barge-in
+    "VoiceCommandDetector",
+    "VoiceCommandIntent",
+    "VoiceCommandResult",
 ]
