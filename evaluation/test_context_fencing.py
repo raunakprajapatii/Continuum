@@ -29,20 +29,12 @@ _Y_THREAD_KEYWORDS = {"project", "deadline", "contract", "legal", "Friday"}
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Stub — implement in Pair C + D integration sprint")
 async def test_recap_contains_only_correct_thread_content(
     mock_brain_request,
 ) -> None:
     """
     Verify that a recap generated for thread Z contains no content
     from a concurrent thread Y.
-
-    Implementation approach (Pair C + D):
-      1. Seed the Thread Memory Store with two separate ThreadSummary objects
-         (thread Z and thread Y).
-      2. Trigger a recap for thread Z.
-      3. Inspect the generated recap text for any keyword from thread Y's summary.
-      4. Assert zero leakage.
     """
     # ── Arrange ──────────────────────────────────────────────────────────────
     recap_request = mock_brain_request  # RecapRequest for thread Z
@@ -65,6 +57,7 @@ async def test_recap_contains_only_correct_thread_content(
         "pass": len(leaked_keywords) == 0,
     }
 
+    ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
     ARTIFACT.write_text(json.dumps(result, indent=2))
 
     assert len(leaked_keywords) == 0, (
