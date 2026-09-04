@@ -179,10 +179,17 @@ class Settings(BaseSettings):
 
     @field_validator("rime_api_key")
     @classmethod
-    def rime_key_must_not_be_placeholder(cls, v: str) -> str:
-        if v.startswith("YOUR_") or v == "":
+    def rime_key_must_not_be_placeholder(cls, v: str, info: object) -> str:
+        import os
+
+        # Allow an empty key when USE_MOCKS=true so the eval suite and local
+        # development work without real Rime credentials.  In production
+        # (use_mocks=false) an empty or placeholder key is a hard error.
+        use_mocks = os.getenv("USE_MOCKS", "false").lower() in ("true", "1", "yes")
+        if not use_mocks and (v.startswith("YOUR_") or v == ""):
             raise ValueError(
-                "RIME_API_KEY is not set. Copy .env.example to .env and fill in your credentials."
+                "RIME_API_KEY is not set. Copy .env.example to .env and fill in your credentials. "
+                "Set USE_MOCKS=true in .env to run without a real Rime key during development."
             )
         return v
 
