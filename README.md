@@ -113,8 +113,12 @@ cp .env.example .env
 source .venv/bin/activate       # Windows Git Bash / macOS / Linux
 # Windows PowerShell:  .\.venv\Scripts\Activate.ps1
 
-# 6. Start the mock freshness API (separate terminal)
+# 6. Start the enterprise freshness API + price console (separate terminal)
 python -m mocks.mock_freshness
+#    open http://localhost:8001/ → the Meridian enterprise pricing console.
+#    Every product price is a freshness fact the checker re-verifies before
+#    the recap; click "Simulate overnight market move" to change prices
+#    between calls and watch the recap flag them.
 
 # 7. Run with mocks (no external services needed)
 USE_MOCKS=true python -m modules.transport.main
@@ -193,9 +197,18 @@ Behaviour guarantees enforced by the UI:
   call, whisper lane = Rime recap. `X-Continuum-Track` is checked by the UI on
   every recap response.
 - **No mocks:** both speakers are recorded live through Deepgram; there is no
-  simulated caller voice and no mock data source. The freshness step still
-  runs during the recap — without a live data source it reports facts as
-  unverified and omits staleness flags.
+  simulated caller voice. The freshness step re-verifies product prices
+  against the **Meridian enterprise price feed** (`mocks/enterprise`, port
+  8001) — the live stand-in data source. Start it (`python -m
+  mocks.mock_freshness`) and open `http://localhost:8001/` for the pricing
+  console: simulate an overnight market move between call one and the
+  callback, and the recap flags the change ("Heads up — Basmati Rice was
+  $940, it's now $955."). Without the feed running, checks report facts as
+  unverified and omit staleness flags.
+
+  See [`mocks/enterprise/ENTERPRISE_BRIEF.md`](mocks/enterprise/ENTERPRISE_BRIEF.md)
+  for the full product catalog and ready-to-speak sales/buyer/boss role-play
+  scripts.
 
 ### Environment Variables
 

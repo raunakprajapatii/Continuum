@@ -48,6 +48,9 @@ export const STRINGS = {
   'launch.llm_row': 'Gemini recap writer',
   'launch.llm_ok': 'Summaries are written by Gemini',
   'launch.llm_off': 'No GEMINI_API_KEY — the heuristic summary is used until one is added.',
+  'launch.fresh_row': 'Freshness data source',
+  'launch.fresh_ok': '{source} · {count} products · live prices',
+  'launch.fresh_off': 'No live data source — start the enterprise price feed (port 8001) to re-verify facts before the recap.',
   'launch.foot': 'Both sides are recorded live through Deepgram and stored in real time. The recap whisper is Rime only — never substituted.',
   // Scenario picker
   'launch.scenario.kicker': 'Choose a test scenario',
@@ -109,6 +112,7 @@ export const STRINGS = {
   'memory.freshness_changed': '{label}: {cached} → now {live}',
   'memory.freshness_unavailable': 'No live data source — facts not re-verified',
   'memory.freshness_verifying': 'Re-verifying before speaking…',
+  'memory.freshness_verified': 'Verified live — {source} prices are current',
   'memory.empty': 'No thread yet — recorded turns will be stored here after the call ends.',
   'tracks.kicker': 'Audio isolation',
 
@@ -230,6 +234,7 @@ export const STRINGS = {
   'evidence.map.single': 'single thread',
   'evidence.no_barge': 'no barge-in in this run',
   'evidence.no_source': 'no live data source — facts not re-verified',
+  'evidence.verified': 'all facts verified against the live enterprise feed',
   'evidence.caught': 'caught',
 
   // Event log

@@ -4,11 +4,14 @@ modules/voice/freshness_checker.py
 Pair D — Fact-Freshness Checker
 
 Consumes the ``facts_to_verify`` list in a ``RecapRequest`` and produces a
-``FreshnessResult`` by querying either:
+``FreshnessResult`` by querying the enterprise data source (``mocks/``
+Meridian pricing feed, port 8001) in both mock and live mode:
 
-  * The mock FastAPI service (``mocks/mock_freshness.py``, port 8001) when
-    ``settings.use_mocks = True``
-  * A live data-source URL when ``settings.use_mocks = False``
+  * The FastAPI service at ``settings.mock_freshness_api_url`` serves both the
+    product price facts (``price_<sku>``) and the legacy generic facts
+    (``price_usd``, ``ticket_status``).
+  * It is the stand-in "live" API — run it as
+    ``python -m mocks.mock_freshness``.
 
 Each fact is checked independently with a per-request timeout.  Network errors
 and timeouts yield ``FreshnessStatus.UNAVAILABLE`` — the checker never raises;
@@ -173,28 +176,18 @@ class FreshnessChecker:
         """
         Return ``(live_value, latency_ms)``.
 
-        Routing:
-          * ``use_mocks=True``  → mock freshness API at
-            ``settings.mock_freshness_api_url/facts/{key}``
-          * ``use_mocks=False`` → same endpoint structure but against a real
-            data source URL (extend this block when live APIs are available)
+        Routing — both modes query the enterprise data source at
+        ``settings.mock_freshness_api_url`` (port 8001).  In this demo the
+        Meridian enterprise pricing feed (``mocks/enterprise/``) IS the live
+        stand-in for a real vendor API: product price keys (``price_<sku>``)
+        resolve to catalog prices, and legacy keys (``price_usd``,
+        ``ticket_status``) resolve from the generic store.  To point at a real
+        external API later, swap the base URL / key mapping here.
 
         Raises ``httpx.HTTPError`` or ``httpx.TimeoutException`` on failure —
         callers must catch.
         """
-        if settings.use_mocks:
-            base_url = settings.mock_freshness_api_url
-        else:
-            # TODO: map fact keys to live data-source base URLs when
-            # real APIs are integrated.  For now, fall through to the
-            # mock endpoint even in non-mock mode so the pipeline works.
-            base_url = settings.mock_freshness_api_url
-            logger.warning(
-                "freshness_checker: use_mocks=False but no live data source "
-                "configured for key=%r — falling back to mock API.",
-                key,
-            )
-
+        base_url = settings.mock_freshness_api_url
         url = f"{base_url}/facts/{key}"
         t0 = time.monotonic()
         response = await client.get(url)

@@ -129,17 +129,20 @@ class Settings(BaseSettings):
 
     # ── LLM (Recap Generator + Freshness Reasoning) ───────────────────────────
     llm_fast_model: str = Field(
-        "gemini-2.0-flash",
+        "gemini-3.6-flash",
         description=(
             "Fast / cheap model for latency-sensitive paths (TL;DR generation). "
-            "Swappable via Antigravity's multi-model support."
+            "Swappable via Antigravity's multi-model support. "
+            "gemini-2.x models are retired for new keys — 3.6-flash is the "
+            "current Flash line."
         ),
     )
     llm_strong_model: str = Field(
-        "gemini-2.5-pro",
+        "gemini-3.6-flash",
         description=(
             "Stronger reasoning model for freshness-diff logic and complex "
-            "thread summarisation."
+            "thread summarisation. Defaults to the current Flash line; point at "
+            "a Pro model (e.g. gemini-3.6-pro) once available on your key."
         ),
     )
     llm_api_key: str = Field(

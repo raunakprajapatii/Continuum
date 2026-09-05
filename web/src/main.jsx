@@ -178,6 +178,16 @@ function LaunchScreen({ sim }) {
           ok={Boolean(caps?.llm?.enabled)}
           detail={caps?.llm?.enabled ? T('launch.llm_ok') : T('launch.llm_off')}
         />
+        <ReadinessRow
+          icon={<Zap size={16} />}
+          title={T('launch.fresh_row')}
+          ok={Boolean(caps?.freshness?.enabled)}
+          detail={
+            caps?.freshness?.enabled
+              ? T('launch.fresh_ok', { source: caps.freshness.source_name, count: caps.freshness.products })
+              : T('launch.fresh_off')
+          }
+        />
         <div className="readiness-foot">
           <ShieldCheck size={15} /> {T('launch.foot')}
         </div>
@@ -315,8 +325,13 @@ function TrackRow({ label, sublabel, tone, active, status, badge, statusTone = '
 function MemoryCard({ sim, threadSummary, recap }) {
   const T = (k, v) => format(t(k, sim.lang), v)
   const freshness = recap?.freshness
-  const changed = freshness?.results?.find((f) => f.status === 'CHANGED')
-  const unavailable = freshness?.results?.some((f) => f.status === 'UNAVAILABLE')
+  const results = freshness?.results || []
+  const changed = results.find((f) => f.status === 'CHANGED')
+  const unavailable = results.some((f) => f.status === 'UNAVAILABLE')
+  // Every fact in the recap was re-verified against the live source and nothing
+  // changed — show that instead of leaving the chip on the ambiguous loading text.
+  const allVerified = results.length > 0 && !changed && !unavailable
+  const sourceName = sim.caps?.freshness?.source_name || 'live feed'
   return (
     <section className="card memory-card">
       <div className="card-title">
@@ -339,6 +354,8 @@ function MemoryCard({ sim, threadSummary, recap }) {
               <small>{T('memory.freshness_check')}</small>
               {changed ? (
                 <strong>{T('memory.freshness_changed', { label: changed.label, cached: changed.cached_value, live: changed.live_value })}</strong>
+              ) : allVerified ? (
+                <strong>{T('memory.freshness_verified', { source: sourceName })}</strong>
               ) : unavailable ? (
                 <strong>{T('memory.freshness_unavailable')}</strong>
               ) : (

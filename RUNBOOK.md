@@ -79,9 +79,21 @@ cd web
 #   or: pnpm dev   (node_modules is committed, so plain vite works without pnpm)
 ```
 
-> No mock freshness API needed anymore — the demo runs entirely on real providers.
-> The freshness check still runs during the recap; without a live data source it
-> reports facts as unverified and simply omits staleness flags.
+> The demo runs on real providers; the freshness check queries the **Meridian
+> enterprise price feed** (mocks/enterprise, port 8001) — the live stand-in data
+> source. Start it in a third terminal to re-verify product prices during the
+> recap:
+>
+> ```bash
+> # ── Terminal 3 — enterprise price feed + console (port 8001) ────────────────
+> python -m mocks.mock_freshness
+> # open http://localhost:8001/ → Meridian pricing console; click
+> # "Simulate overnight market move" between call one and the callback to
+> # demonstrate the freshness catch (price changes get flagged in the recap).
+> ```
+>
+> Without the feed running, freshness checks report facts as unverified and the
+> recap simply omits staleness flags.
 
 ---
 

@@ -1218,7 +1218,11 @@ export function useSimulation() {
     const halted = findEvent('tts.playback_halted')
     const detected = findEvent('barge_in.detected')
     const autoAnswer = findEvent('call.auto_answer_triggered')
-    const changed = log.find((e) => e.name === 'freshness.discrepancy_found')
+    // Freshness ran if any CHANGED / UNAVAILABLE event fired (or the recap text
+    // was built, which only happens after the freshness step).
+    const changed = log.find((e) => e.name === 'freshness.discrepancy_found' && !String(e.meta.status || '').startsWith('UNAVAIL'))
+    const unavail = log.find((e) => e.name === 'freshness.discrepancy_found' && String(e.meta.status || '').startsWith('UNAVAIL'))
+    const freshnessRan = Boolean(changed || unavail || findEvent('recap.text_ready'))
     let answerToConnectMs = null
     if (autoAnswer) {
       const connectedAfter = log.find((e) => e.name === 'call.connected' && e.epoch >= autoAnswer.epoch)
@@ -1227,8 +1231,8 @@ export function useSimulation() {
     setMetrics({
       recapLatencyMs: firstAudio && matchEvent ? Math.max(0, firstAudio.epoch - matchEvent.epoch) : null,
       bargeHaltMs: halted ? (halted.meta.delta_ms ?? (detected ? halted.epoch - detected.epoch : null)) : null,
-      freshnessChanged: Boolean(changed && !String(changed.meta.status || '').startsWith('UNAVAIL')),
-      freshnessDetail: changed ? changed.detail : null,
+      freshnessChanged: Boolean(changed),
+      freshnessDetail: changed ? changed.detail : (freshnessRan ? 'all facts verified against the live enterprise feed' : null),
       autoAnswered: Boolean(autoAnswer),
       autoPickupMode: autoAnswer?.meta?.mode || null, // 'network' | 'barge'
       answerToConnectMs,

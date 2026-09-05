@@ -4,16 +4,21 @@ mocks/mock_freshness.py
 Pair D (Voice & Facts) mock freshness data source — used by the
 Fact-Freshness Checker during development.
 
-This is a tiny FastAPI service that exposes a mock "live data" endpoint
-for the price_usd fact. The value can be toggled at runtime so the
-evaluation harness can deterministically demonstrate Scenario C
-(stale fact caught and flagged in the recap).
+This is a tiny FastAPI service that exposes the "live" data endpoints the
+freshness checker queries.  It now hosts the full **Meridian enterprise
+pricing feed** (see ``mocks/enterprise/``): every product price is a freshness
+fact, and a presentation console at ``http://localhost:8001/`` lets you
+simulate overnight market moves to demonstrate Scenario C (stale fact caught
+and flagged in the recap).
 
 Run as a standalone process:
     python -m mocks.mock_freshness
 
 Then query:
-    GET http://localhost:8001/facts/{key}
+    GET  http://localhost:8001/                      → enterprise console
+    GET  http://localhost:8001/api/enterprise        → company + product catalog
+    POST http://localhost:8001/api/enterprise/market-tick
+    GET  http://localhost:8001/facts/{key}           → freshness contract
     POST http://localhost:8001/facts/{key}  {"value": "420"}
 
 Also importable for programmatic use in tests:
@@ -23,87 +28,46 @@ Also importable for programmatic use in tests:
 from __future__ import annotations
 
 import json
-import time
-from datetime import datetime, timezone
 from typing import Any
 
-# ── In-memory store ────────────────────────────────────────────────────────────
+# The enterprise service owns all fact state (product price keys + legacy keys).
+# ``_FACT_STORE`` is re-exported for the original evaluation fixtures that
+# snapshot the legacy generic-fact store.
+from mocks.enterprise.service import (
+    _LEGACY_STORE as _FACT_STORE,
+    get_fact_value,
+    set_fact_value,
+)
 
-# The "live" data the mock API serves. Keys match TimeSensitiveFact.key values.
-# This is intentionally different from the $400 in the mock thread summary
-# to demonstrate the freshness-catch acceptance test.
-_FACT_STORE: dict[str, str] = {
-    "price_usd": "$420",       # was $400 in the thread → triggers CHANGED
-    "ticket_status": "closed", # hypothetical second fact for context-fencing test
-}
-
-
-def get_fact_value(key: str) -> str | None:
-    """Return the current 'live' value for a fact key, or None if unknown."""
-    return _FACT_STORE.get(key)
-
-
-def set_fact_value(key: str, value: str) -> None:
-    """
-    Update the live value for a fact key.
-
-    Use this in the evaluation harness to change a value between calls
-    and verify the freshness check catches it.
-    """
-    _FACT_STORE[key] = value
+__all__ = ["get_fact_value", "set_fact_value", "_FACT_STORE", "app"]
 
 
 # ── FastAPI service ────────────────────────────────────────────────────────────
 
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI
     from fastapi.responses import JSONResponse
-    from pydantic import BaseModel as _BaseModel
+
+    from mocks.enterprise.router import router as _enterprise_router
 
     app: Any = FastAPI(
-        title="Continuum Mock Freshness API",
+        title="Continuum Enterprise Freshness API",
         description=(
-            "Deterministic mock data source for the Fact-Freshness Checker. "
-            "Modify fact values at runtime to demonstrate Scenario C (stale fact catch)."
+            "Meridian Commodities & Exports live price feed — the enterprise "
+            "data source the Fact-Freshness Checker re-verifies facts against. "
+            "Modify prices at runtime to demonstrate Scenario C (stale fact catch)."
         ),
-        version="0.1.0",
+        version="1.0.0",
     )
+    app.include_router(_enterprise_router)
 
-    class _FactUpdate(_BaseModel):
-        value: str
-
-    @app.get("/facts/{key}", response_class=JSONResponse)
-    async def read_fact(key: str) -> dict[str, Any]:
-        """Return the current live value for a fact key."""
-        value = get_fact_value(key)
-        if value is None:
-            raise HTTPException(status_code=404, detail=f"Unknown fact key: {key!r}")
-        return {
-            "key": key,
-            "value": value,
-            "retrieved_at": datetime.now(tz=timezone.utc).isoformat(),
-            "latency_ms": 12,  # simulated fast response
-        }
-
-    @app.post("/facts/{key}", response_class=JSONResponse)
-    async def update_fact(key: str, body: _FactUpdate) -> dict[str, Any]:
-        """
-        Update the live value for a fact key.
-
-        Used by the evaluation harness to inject a changed fact between calls.
-        """
-        set_fact_value(key, body.value)
-        return {
-            "key": key,
-            "value": body.value,
-            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
-        }
-
-    @app.get("/health")
+    @app.get("/health", response_class=JSONResponse)
     async def health() -> dict[str, str]:
-        return {"status": "ok", "service": "mock-freshness-api"}
+        return {"status": "ok", "service": "enterprise-freshness-api"}
 
 except ImportError:
+    from datetime import datetime, timezone
+
     async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
         """
         Minimal ASGI fallback for test environments without FastAPI.
@@ -122,7 +86,7 @@ except ImportError:
 
         if method == "GET" and path == "/health":
             status = 200
-            payload = {"status": "ok", "service": "mock-freshness-api"}
+            payload = {"status": "ok", "service": "enterprise-freshness-api"}
         elif path.startswith("/facts/"):
             key = path.removeprefix("/facts/")
             if method == "GET":
@@ -156,7 +120,7 @@ except ImportError:
                     status = 200
                     payload = {
                         "key": key,
-                        "value": str(value),
+                        "value": get_fact_value(key),
                         "updated_at": datetime.now(tz=timezone.utc).isoformat(),
                     }
 
@@ -180,4 +144,4 @@ if __name__ == "__main__":
         port=8001,
         reload=True,
         log_level="info",
-    )
+    )

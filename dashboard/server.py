@@ -313,17 +313,30 @@ async def capabilities() -> dict:
         "model": settings.llm_fast_model,
     }
 
+    # The freshness data source is the Meridian enterprise pricing feed
+    # (mocks/enterprise, port 8001).  When it is up, every product price is a
+    # live freshness fact the recap can re-verify.
     freshness = {
         "enabled": False,
+        "source_name": None,
+        "products": 0,
         "price_usd": None,
         "endpoint": settings.mock_freshness_api_url,
     }
     try:
-        async with httpx.AsyncClient(timeout=1.0) as client:
-            response = await client.get(f"{settings.mock_freshness_api_url}/facts/price_usd")
+        async with httpx.AsyncClient(timeout=1.5) as client:
+            response = await client.get(f"{settings.mock_freshness_api_url}/api/enterprise")
         if response.is_success:
+            data = response.json() or {}
             freshness["enabled"] = True
-            freshness["price_usd"] = (response.json() or {}).get("value")
+            freshness["source_name"] = data.get("name") or "Enterprise price feed"
+            freshness["products"] = len(data.get("products") or [])
+            price_fact = next(
+                (p for p in data.get("products") or [] if p.get("sku") == "BAS112"),
+                None,
+            )
+            if price_fact:
+                freshness["price_usd"] = price_fact.get("current_price")
     except httpx.HTTPError:
         pass  # offline -> demo UI shows a setup hint
 
