@@ -154,9 +154,10 @@ class TransportEngine:
         """
         Process user speech during the ring window.
 
-        - If ANSWER_CALL (e.g. "I know, just pick up", "Answer"):
+        - If ANSWER_CALL (e.g. "I know, just pick up", "call utha lo",
+          "मुझे पता है, कॉल उठा लो" — any pickup phrasing):
             Interrupts active whisper recap and transitions call to CONNECTED.
-        - If DISMISS_RECAP (e.g. "Skip", "I remember"):
+        - If DISMISS_RECAP (e.g. "Skip", "mujhe pata hai", "bas karo"):
             Interrupts active whisper recap only; phone continues ringing.
         - If IGNORE:
             No action taken.

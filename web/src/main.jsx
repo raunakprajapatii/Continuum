@@ -3,13 +3,27 @@ import { createRoot } from 'react-dom/client'
 import {
   Activity, AlertTriangle, ArrowRight, AudioLines, Bot, Check, ChevronRight, CircleDot,
   Clock3, Command, Download, Ear, Gauge, Loader2, Mic, MicOff, Phone, PhoneCall, PhoneOff,
-  Play, Radio, RotateCcw, ShieldCheck, Sparkles, Square, Volume2, VolumeX, Waves, Zap,
+  Play, Radio, RotateCcw, ShieldCheck, Sparkles, Square, Volume2, VolumeX, Zap,
 } from 'lucide-react'
 import './styles.css'
 import './sim-console.css'
-import { format, LANGUAGES, t } from './i18n.js'
-import { CALLER, INTENT_LABELS, SPEAKERS } from './sim/config.js'
+import logoUrl from './assets/ChatGPT Image Sep 5, 2026, 08_41_24 PM.png'
+import { format, t } from './i18n.js'
+import { BARGE_EXAMPLES, CALLER, INTENT_LABELS, SPEAKERS } from './sim/config.js'
 import { PHASE, RECAP_STATE, useSimulation } from './sim/useSimulation.js'
+
+// The new brand image doubles as the site logo (top bar + footer) and the
+// browser favicon. Vite fingerprints the import so both work in dev and in
+// the production build.
+const faviconLink = document.createElement('link')
+faviconLink.rel = 'icon'
+faviconLink.type = 'image/png'
+faviconLink.href = logoUrl
+document.head.appendChild(faviconLink)
+
+const BrandLogo = () => (
+  <span className="brand-mark brand-logo"><img src={logoUrl} alt="Continuum logo" /></span>
+)
 
 const KIND_ICONS = {
   call: PhoneCall,
@@ -45,7 +59,7 @@ function SimApp() {
         <Console sim={sim} />
       )}
       <footer>
-        <a className="brand" href="#top"><span className="brand-mark"><Waves size={18} /></span>CONTINUUM</a>
+        <a className="brand" href="#top"><BrandLogo />CONTINUUM</a>
         <span>{t('footer.tag', sim.lang)}</span>
         <span>{t('footer.made', sim.lang)}</span>
       </footer>
@@ -55,7 +69,7 @@ function SimApp() {
 
 // ── Top bar (always visible — demo script §02A) ──────────────────────────────
 function TopBar({ sim }) {
-  const { caps, phase, callStateLabel, lang, setLang } = sim
+  const { caps, phase, callStateLabel, lang } = sim
   const T = (k, v) => format(t(k, lang), v)
   const rime = caps?.rime
   // Once the recap is generated, surface the voice/model actually speaking.
@@ -65,7 +79,7 @@ function TopBar({ sim }) {
     callStateLabel === 'CONNECTED' ? ' connected' : callStateLabel === 'RINGING' ? ' ringing' : ''
   return (
     <nav className="topbar sim-topbar" id="top">
-      <a className="brand" href="#top" aria-label="Continuum home"><span className="brand-mark"><Waves size={18} /></span>CONTINUUM</a>
+      <a className="brand" href="#top" aria-label="Continuum home"><BrandLogo />CONTINUUM</a>
       <div className="thread-chip"><span className="avatar small">Z</span><span>{T('topbar.thread')}</span><span className="online-dot" /></div>
       <div className="provider" title="Provider transparency — recap whisper is Rime only">
         <span>{T('topbar.powered_by')}</span><b>Rime</b><i />
@@ -73,18 +87,6 @@ function TopBar({ sim }) {
         <span>{T('topbar.voice')}: <b>{activeSpeaker}</b></span><i />
         <span>{T('topbar.track')}: <b>{rime ? 'private' : '…'}</b></span>
         {caps?.stt?.enabled && <><i /><span>{T('topbar.stt')}: <b>Deepgram</b></span></>}
-      </div>
-      <div className="lang-toggle" role="group" aria-label="Language">
-        {LANGUAGES.map((l) => (
-          <button
-            key={l.code}
-            className={lang === l.code ? 'active' : ''}
-            onClick={() => setLang(l.code)}
-            title={l.label}
-          >
-            {l.short}
-          </button>
-        ))}
       </div>
       <div className={`state-pill${connectedColor}`}>
         <span className="pulse" />{callStateLabel}
@@ -381,7 +383,7 @@ function TranscriptList({ turns, listening, interimText, lang }) {
       {turns.map((turn) => (
         <div key={turn.id} className={`turn ${turn.speaker === 'USER' ? 'user' : 'caller'} ${turn.live ? 'live' : ''}`}>
           <span className="turn-avatar">{SPEAKERS[turn.speaker]?.label || turn.speaker}</span>
-          <div><p>{turn.text}</p>{turn.live && <em className="turn-live">speaking…</em>}{turn.mock && <em className="mock-tag">{lang === 'hi' ? 'स्क्रिप्टेड' : 'scripted'}</em>}</div>
+          <div><p>{turn.text}</p>{turn.live && <em className="turn-live">speaking…</em>}{turn.mock && <em className="mock-tag">scripted</em>}</div>
         </div>
       ))}
       {turns.length === 0 && (
@@ -616,12 +618,27 @@ function RecapPlayer({ sim }) {
         </p>
         {playing && (
           <div className="barge-tests">
-            <button className="barge-test answer" onClick={() => sim.testPhrase('I know, just pick up the call')}>
-              <Mic size={14} /> {T('recap.test_answer')}
-            </button>
-            <button className="barge-test stop" onClick={() => sim.testPhrase('Hold on, one second')}>
-              <Square size={13} /> {T('recap.test_stop')}
-            </button>
+            <span className="barge-tests-label">{T('recap.test_label')}</span>
+            {BARGE_EXAMPLES.answer.map((phrase) => (
+              <button
+                key={phrase}
+                className="barge-test answer"
+                title={T('recap.test_answer_tip')}
+                onClick={() => sim.testPhrase(phrase)}
+              >
+                <PhoneCall size={13} /> {phrase}
+              </button>
+            ))}
+            {BARGE_EXAMPLES.stop.map((phrase) => (
+              <button
+                key={phrase}
+                className="barge-test stop"
+                title={T('recap.test_stop_tip')}
+                onClick={() => sim.testPhrase(phrase)}
+              >
+                <Square size={13} /> {phrase}
+              </button>
+            ))}
           </div>
         )}
         {(recapState === RECAP_STATE.HALTED || recapState === RECAP_STATE.DONE) && (

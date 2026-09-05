@@ -17,6 +17,20 @@ same browser microphone can record both sides of a live two-way conversation:
 User 1 records as USER, User 2 (Z in the demo) records as CALLER.
 
 Deepgram key is read from settings and is never logged.
+
+Hinglish language policy
+------------------------
+The demo mic transcribes spoken Hinglish (Hindi + English code-switching).
+Deepgram's multilingual mode (``language=multi`` on Nova-3) is documented by
+Deepgram staff as frequently misdetecting Hindi as Spanish, so this bridge
+uses the dedicated Nova-3 Hindi model (``language=hi``) instead: it handles
+Hindi-English code-switching accurately and never drifts into Spanish.
+
+One caveat: ``language=hi`` returns Hindi in Devanagari script (Latin-script
+Hindi ``hi-Latn`` only exists on legacy models). Every transcript is therefore
+romanized to Latin-script Hinglish by ``dashboard.hinglish`` before it reaches
+the browser — English tokens Deepgram already emits in Latin pass through
+unchanged, so "hello भाई कैसे हो" arrives as "hello bhai kaise ho".
 """
 
 from __future__ import annotations
@@ -28,6 +42,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from dashboard.hinglish import romanize_hinglish
 from shared.config import settings
 
 logger = logging.getLogger(__name__)
@@ -35,7 +50,9 @@ logger = logging.getLogger(__name__)
 DEEPGRAM_WS = "wss://api.deepgram.com/v1/listen"
 
 #: Model used for the dashboard's live transcription.  Override via DEEPGRAM_MODEL.
-DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-2-general")
+#: nova-3 is the only current Deepgram model with good Hindi-English
+#: code-switching (nova-2's multi mode is Spanish + English only).
+DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3-general")
 
 
 class SttUnavailableError(RuntimeError):
@@ -50,16 +67,21 @@ def stt_available() -> bool:
 
 
 def _upstream_uri(language: Optional[str] = None) -> str:
+    language = language or settings.rime_default_language or "en"
+    # Deepgram recommends a tighter endpointing value (100 ms) when Hindi is
+    # involved — both the multilingual mode and the dedicated ``hi`` model do
+    # Hindi/English code-switching, so turns need to segment quickly.
+    endpointing = "100" if language.strip().lower() in ("hi", "multi") else "250"
     params = {
         "model": DEEPGRAM_MODEL,
         "encoding": "linear16",
         "sample_rate": "16000",
         "channels": "1",
         "interim_results": "true",
-        "endpointing": "250",
+        "endpointing": endpointing,
         "punctuate": "true",
         "smart_format": "true",
-        "language": language or settings.rime_default_language or "en",
+        "language": language,
     }
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return f"{DEEPGRAM_WS}?{query}"
@@ -144,8 +166,11 @@ async def run_stt_relay(
     disconnects.  Sends ``ready`` first, then transcript events tagged with the
     ``speaker`` who is recording (USER or CALLER).
 
-    ``language`` (BCP-47, e.g. "en" / "hi") is forwarded to Deepgram so a
-    Hindi conversation is transcribed in Hindi; defaults to
+    ``language`` is forwarded to Deepgram. For Hinglish voice input the demo
+    sends "hi" (the Nova-3 Hindi model, which handles Hindi/English
+    code-switching accurately — Nova-3 ``multi`` is prone to misdetecting
+    Hindi as Spanish). Every transcript is romanized to Latin-script Hinglish
+    before it is sent to the browser; defaults to
     ``settings.rime_default_language``.
     """
     speaker = normalize_speaker(speaker)
@@ -206,7 +231,7 @@ async def run_stt_relay(
                 {
                     "type": "transcript",
                     "speaker": speaker,
-                    "text": item["text"],
+                    "text": romanize_hinglish(item["text"]),
                     "is_final": item["is_final"],
                     "confidence": item["confidence"],
                     "ts": datetime.now(tz=timezone.utc).isoformat(),

@@ -135,8 +135,9 @@
 .err-label{color:#b34a3a;background:#fff0ec}
 .halt-label{color:#8a5a12;background:#fff4dc}
 .halt-label.answer{color:#b34a3a;background:#ffe9e4}
-.barge-tests{display:flex;gap:9px;flex-wrap:wrap}
-.barge-test{display:inline-flex;align-items:center;gap:7px;border-radius:10px;padding:9px 12px;font-size:11px;font-weight:600}
+.barge-tests{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.barge-tests-label{flex-basis:100%;font:500 9.5px 'DM Mono';letter-spacing:.06em;text-transform:uppercase;color:#8a92a3}
+.barge-test{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:7px 11px;font-size:11px;font-weight:600}
 .barge-test.answer{background:#fff0ec;color:#b04738;border:1px solid #f7d2c8}
 .barge-test.answer:hover{background:#ffe4dc}
 .barge-test.stop{background:#f1f2f7;color:#4a5470;border:1px solid #e3e6ee}
@@ -213,10 +214,6 @@
 .auto-live-panel .mic-chip-wrap{justify-content:flex-start}
 
 /* ── Language toggle (top bar) ──────────────────────────────────────────── */
-.lang-toggle{display:inline-flex;gap:2px;background:#f1ede6;border:1px solid var(--line);border-radius:999px;padding:3px;flex:none}
-.lang-toggle button{border:0;background:transparent;color:#8a90a0;font:700 10px 'DM Mono';border-radius:999px;padding:5px 9px;cursor:pointer;transition:.16s}
-.lang-toggle button:hover{color:var(--ink)}
-.lang-toggle button.active{background:#10152e;color:#fff}
 
 /* ── Launch scenario picker (choose test case before recording) ──────────── */
 .scenario-picker{margin:26px 0 22px;max-width:640px}

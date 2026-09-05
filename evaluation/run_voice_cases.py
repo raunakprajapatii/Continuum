@@ -105,6 +105,9 @@ async def run_scenario_2():
     pipeline = VoicePipeline(freshness_checker=FreshnessChecker(client=client))
 
     req = make_recap_request(urgency=RecapUrgency.STANDARD)
+    # No user commitment -> the ticket open item is surfaced as the single
+    # next action (the recap never repeats it in a standalone "still open" line).
+    req.summary.commitments = []
     req.summary.open_items = ["Follow up on ticket TKT-9941 before noon."]
 
     t0 = time.monotonic()
@@ -151,7 +154,8 @@ async def run_scenario_3():
     print_field("Execution Latency", f"{elapsed_ms} ms", GREEN)
 
     assert len(tts.text.split()) <= 20
-    assert tts.time_scale_factor == 0.75
+    # HEADLINE_ONLY urgency uses 0.72 per rime_tts_client._URGENCY_SPEED.
+    assert tts.time_scale_factor == 0.72
     assert not violations
 
 

@@ -17,13 +17,31 @@ Rime Prompting Guide — all 8 rules are enforced by ``RimePromptValidator``
   6. Wrap any ID / ticket number / code in ``spell(...)``.
   7. Never invent details not present in thread memory.
   8. End with the single most useful next action, if one exists.
+
+Recap quality (light + short):
+  The recap is a PURE recap — headline first, then only a changed-fact flag
+  (freshness), then one next action. A standalone "still open / open items"
+  sentence is deliberately NOT emitted: it only repeats the headline or the
+  next action, which is exactly the kind of filler the demo should never hear.
+  The only extra that may appear (long ring window only) is a short note when
+  the previous call dropped mid-sentence, because that fragment can carry a
+  ticket number the agent needs.
+
+``language`` selects the fixed *frames* only (freshness flag, interruption
+note, next-action lead-in):
+  - ``en``  → English frames.
+  - ``hi``  → HINGLISH frames: Hindi written in Latin (Roman) letters, mixed
+    naturally with English words (e.g. "Sun — price ab $420 hai."). Thread
+    memory content — headline, open items, commitments — is kept exactly as
+    it was recorded (Gemini already writes Hinglish for Hindi conversations),
+    so nothing is ever invented or translated on the fly.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from shared.schemas import (
@@ -211,10 +229,23 @@ class RecapTextBuilder:
         """
         Build and validate the Rime-formatted recap string.
 
-        ``language`` (``en`` / ``hi``) localises the fixed recap phrasing
-        (freshness flags, open-item and next-action frames). Thread-memory
-        content — headline, open items, commitments — is kept exactly as it
-        was recorded so nothing is ever invented or translated on the fly.
+        ``language`` (``en`` / ``hi``) selects the fixed recap frames only.
+        ``hi`` produces HINGLISH frames (Latin-script Hindi mixed with English)
+        — never Devanagari. Thread-memory content — headline, open items,
+        commitments — is kept exactly as it was recorded so nothing is ever
+        invented or translated on the fly.
+
+        Structure (pure recap — light and short):
+
+          HEADLINE_ONLY:  headline.
+          STANDARD:       headline → freshness flags (changed facts only)
+                          → single next action.
+          EXTENDED:       headline → freshness flags (incl. unavailable facts)
+                          → short mid-sentence-drop note (if interrupted)
+                          → single next action.
+
+        A standalone open-items sentence is intentionally omitted — it only
+        repeats the headline or the next action.
 
         Raises ``RecapTextValidationError`` if the generated text violates any
         of the 8 Rime prompting guide rules.
@@ -236,16 +267,10 @@ class RecapTextBuilder:
         # ── Rule 5: Freshness flags early ─────────────────────────────────────
         if freshness.any_changed:
             for fact_result in freshness.results:
-                flag = self._spoken_flag(fact_result, hi=hi)
-                if flag:
-                    parts.append(flag)
-
-        # ── Standard detail: open items ───────────────────────────────────────
-        if urgency in (RecapUrgency.STANDARD, RecapUrgency.EXTENDED):
-            if summary.open_items:
-                open_text = self._format_open_items(summary.open_items, hi=hi)
-                if open_text:
-                    parts.append(open_text)
+                if fact_result.status == FreshnessStatus.CHANGED:
+                    flag = self._spoken_flag(fact_result, hi=hi)
+                    if flag:
+                        parts.append(flag)
 
         # ── Extended: stale/UNAVAILABLE fact caveats ──────────────────────────
         if urgency == RecapUrgency.EXTENDED:
@@ -255,6 +280,8 @@ class RecapTextBuilder:
                     if flag:
                         parts.append(flag)
 
+            # The previous call dropped mid-sentence — that fragment can carry
+            # an important anchor (e.g. a ticket number), so keep it short.
             if summary.is_interrupted and summary.last_spoken_turn_text:
                 interrupted_note = self._format_interrupted(
                     summary.last_spoken_turn_text, hi=hi
@@ -262,7 +289,9 @@ class RecapTextBuilder:
                 if interrupted_note:
                     parts.append(interrupted_note)
 
-        # ── Rule 8: End with next action ──────────────────────────────────────
+        # ── Rule 8: End with the single next action ──────────────────────────
+        # Open items feed the next action (fallback) rather than a standalone
+        # sentence, keeping the recap free of repetition.
         next_action = self._format_next_action(summary, hi=hi)
         if next_action:
             parts.append(next_action)
@@ -355,37 +384,23 @@ class RecapTextBuilder:
         Ready-to-insert spoken flag for a fact check outcome.
 
         English uses ``FactCheckResult.spoken_flag`` (Rime rule 5 phrasing);
-        Hindi gets the same two facts in a localised frame.
+        Hinglish (``hi``) gets the same two facts in a Latin-script frame.
         """
         if result.status == FreshnessStatus.CHANGED and result.live_value is not None:
             if hi:
                 return (
-                    f"सुनिए — {result.label} पहले {result.cached_value} था, "
-                    f"अब {result.live_value} है."
+                    f"Sun — {result.label} pehle {result.cached_value} tha, "
+                    f"ab {result.live_value} hai."
                 )
             return result.spoken_flag
         if result.status == FreshnessStatus.UNAVAILABLE:
             if hi:
                 return (
-                    f"मैं {result.label} की पुष्टि नहीं कर पाया — "
-                    f"आखिरी आँकड़ा {result.cached_value} था."
+                    f"Yeh {result.label} ab confirm nahi ho paya — "
+                    f"last value {result.cached_value} thi."
                 )
             return result.spoken_flag
         return ""
-
-    @staticmethod
-    def _format_open_items(open_items: list[str], hi: bool = False) -> str:
-        """Convert the first open item into a spoken fragment ≤ 20 words."""
-        if not open_items:
-            return ""
-        item = open_items[0].strip()
-        # Prefix with "so," (Rule 3 — one disfluency max)
-        sentence = f"अभी बाकी है: {item}" if hi else f"So, still open: {item}"
-        # Truncate if over word limit
-        words = sentence.split()
-        if len(words) > 20:
-            sentence = " ".join(words[:19]) + "."
-        return sentence
 
     @staticmethod
     def _format_interrupted(last_text: str, hi: bool = False) -> str:
@@ -394,13 +409,13 @@ class RecapTextBuilder:
         if not preview:
             return ""
         sentence = (
-            f"कॉल बीच में कट गई — वे कह रहे थे: \"{preview}\"."
+            f"Call beech mein cut ho gayi. Unka last line: \"{preview}\"."
             if hi
             else f"They were cut off mid-sentence — they said: \"{preview}\"."
         )
         words = sentence.split()
         if len(words) > 20:
-            sentence = "The call dropped mid-sentence." if not hi else "कॉल बीच में कट गई."
+            sentence = "The call dropped mid-sentence." if not hi else "Call beech mein cut ho gayi."
         return sentence
 
     @staticmethod
@@ -413,14 +428,14 @@ class RecapTextBuilder:
                 words = action.split()
                 if len(words) > 18:
                     action = " ".join(words[:17]) + "."
-                return f"आपकी कार्रवाई: {action}" if hi else f"Your move: {action}"
+                return f"Aapka move: {action}" if hi else f"Your move: {action}"
 
-        # Fall back to first open item
+        # Fall back to first open item (keeps the recap to one actionable line)
         if summary.open_items:
             item = summary.open_items[0].strip()
             words = item.split()
             if len(words) > 17:
                 item = " ".join(words[:16]) + "."
-            return f"पहली प्राथमिकता: {item}" if hi else f"Top priority: {item}"
+            return f"Sabse zaroori: {item}" if hi else f"Top priority: {item}"
 
         return ""

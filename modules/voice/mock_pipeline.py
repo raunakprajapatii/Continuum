@@ -40,11 +40,12 @@ from shared.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Canned spoken text matching Scenario C (Pair D's showcase scenario)
+# Canned spoken text matching Scenario C (Pair D's showcase scenario).
+# Pure recap: headline → freshness flag → single next action (no repeated
+# "still open" line — it only duplicates the headline or the next action).
 _MOCK_SPOKEN_TEXT = (
     "Z wanted the Q3 number; you said you'd check with finance. "
     "Heads up — Unit price was $400, it's now $420. "
-    "So, still open: Check with finance team on volume discounts. "
     "Your move: Loop in finance today and get back to Z on volume discounts."
 )
 

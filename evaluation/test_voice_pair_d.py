@@ -465,12 +465,17 @@ class TestRecapTextBuilderAdvanced:
     builder = RecapTextBuilder()
 
     def test_builder_auto_wraps_alphanumeric_ticket_id(self) -> None:
+        """Tickets surface through the next action, never a repeated open-item line."""
         req = make_recap_request()
+        # No user commitment -> the open item becomes the single next action.
+        req.summary.commitments = []
         req.summary.open_items = ["Resolve ticket INC-9902 before call."]
         freshness = _make_freshness(req, changed=False)
         text = self.builder.build(req.summary, freshness, RecapUrgency.STANDARD)
 
         assert "spell(INC-9902)" in text
+        # Pure recap: no redundant standalone "still open" sentence.
+        assert "still open" not in text
         violations = RimePromptValidator().validate(text)
         assert violations == []
 
@@ -570,7 +575,8 @@ class TestVoicePipelineEndToEnd:
         assert tts_req.private_track_id == "continuum-private-whisper"
         assert tts_req.is_interruptible is True
         assert tts_req.model == RimeModel.CODA
-        assert tts_req.time_scale_factor == 0.85
+        # STANDARD urgency uses 0.78 per rime_tts_client._URGENCY_SPEED.
+        assert tts_req.time_scale_factor == 0.78
 
         assert "Heads up — Unit price was $400, it's now $420." in tts_req.text
         assert "Your move" in tts_req.text
@@ -593,6 +599,8 @@ class TestVoicePipelineEndToEnd:
     async def test_pipeline_e2e_ticket_spell_selects_coda(self, live_pipeline) -> None:
         set_fact_value("price_usd", "$400")
         req = make_recap_request(urgency=RecapUrgency.STANDARD)
+        # No user commitment -> the ticket open item becomes the next action.
+        req.summary.commitments = []
         req.summary.open_items = ["Check ticket TKT-8841 before proceeding."]
         tts_req = await live_pipeline.run(req)
 
@@ -611,7 +619,8 @@ class TestVoicePipelineEndToEnd:
         req = make_recap_request(urgency=RecapUrgency.HEADLINE_ONLY)
         tts_req = await live_pipeline.run(req)
 
-        assert tts_req.time_scale_factor == 0.75
+        # HEADLINE_ONLY urgency uses 0.72 per rime_tts_client._URGENCY_SPEED.
+        assert tts_req.time_scale_factor == 0.72
         assert tts_req.model == RimeModel.CODA
         violations = RimePromptValidator().validate(tts_req.text)
         assert violations == []

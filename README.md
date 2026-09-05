@@ -140,8 +140,10 @@ end to end — **no mocks, everything live**:
    writes the recap from the stored turns and **Rime** dictates it on the
    private whisper track only (timeScaleFactor 0.78 — a little faster).
 4. **Barge-in or listen** — you either let the full recap play (then answer),
-   or interrupt with *“I know, just pick up the call”* (auto-answer) vs a
-   generic *“Hold on”* (stop-only) — measured and logged live on screen.
+   or interrupt with a pickup command — *“call utha lo”*, *“mujhe pta hai,
+   call utha lo”*, or *“I know, just pick up the call”* — (auto-answer) vs a
+   generic *“Hold on”* / *“bas karo”* (stop-only) — measured and logged live on
+   screen. Recognition is verb-centric, not tied to one fixed sentence.
 5. **Connected** — you pick up already caught up; record the reconnected call
    the same way, then end it.
 
@@ -163,10 +165,16 @@ cd web && pnpm install && pnpm dev
 Open http://localhost:5173 in Chrome. The launch screen first asks which **test
 case** to run — **1) full recap**, **2) barge-in**, or **3) 30s time limit &
 auto-pickup** — then press **Start the simulation**; the chosen test case is
-carried through the whole run and auto-starts at the callback recap. A
-**language toggle (EN / हिंदी)** in the top bar switches the dashboard copy,
-the recap phrasing and the scripted caller's lines (Rime speaks Hindi via
-`lang=hin`).
+carried through the whole run and auto-starts at the callback recap.
+
+**Language model (no switch):** the dashboard copy is English only — there is
+no EN/HI toggle. The *voice layer* is fixed to Hinglish: the mic transcribes
+with the Deepgram Nova-3 Hindi model (`language=hi` — `multi` misdetects Hindi
+as Spanish) and the backend romanizes the Devanagari to Latin-script Hinglish,
+so "hello भाई कैसे हो" arrives as "hello bhai kaise ho". Gemini writes
+the recap in Hinglish (Latin script — never Devanagari), and Rime speaks it
+with the Hindi-accented voice `nadi` (`lang=hin`). The scripted Z in the
+auto-pickup test case also speaks Hinglish with the male Hindi voice `taru`.
 
 > **Note on the LiveKit transport path** (`modules/transport/`): it needs the
 > venv Python 3.12 (LiveKit plugins refuse 3.13+). Run it as

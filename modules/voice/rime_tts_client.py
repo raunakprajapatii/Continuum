@@ -41,6 +41,12 @@ logger = logging.getLogger(__name__)
 # "eyre" (Female 30–50, American, warm, calm, easy to listen to).
 DEFAULT_CONTINUUM_SPEAKER = "eyre"
 
+# Optimal Rime voice for the Hinglish recap (Hindi conversations, lang hi):
+# "nadi" is a Female Hindi voice on coda (country IN, lang hin) — keeps the
+# calm female whisper persona while speaking with a native Hindi accent.
+# Verified against the live catalog (users.rime.ai/data/voices/voice_details.json).
+HINGLISH_CONTINUUM_SPEAKER = "nadi"
+
 # spell() is Rime inline syntax supported natively by coda / mist v3 (see
 # RIME_VOICE_DESIGN.md § "Model Selection on spell(...)"). coda is the primary
 # model: it accepts all recap text naturally and hosts the documented
@@ -96,7 +102,10 @@ class RimeTtsClient:
 
         ``language`` (BCP-47, e.g. ``en`` / ``hi``) overrides the default
         ``settings.rime_default_language`` — used by the demo dashboard to
-        follow the presenter's language choice.
+        pick the spoken recap language. When the recap is Hinglish (any ``hi``
+        code) the speaker is switched to ``nadi`` (Female, native Hindi voice
+        on coda) so the Hinglish recap is read with a Hindi accent. English
+        recaps keep the configured / Continuum whisper voice (``eyre``).
 
         Raises ``ValueError`` if:
         - ``spoken_text`` is empty
@@ -112,14 +121,20 @@ class RimeTtsClient:
         model = self._select_model(spoken_text)
         speed = self._select_speed(recap_request.urgency, model)
 
+        language = language or settings.rime_default_language
+        speaker = self._speaker
+        if (language or "").strip().lower().startswith("hi"):
+            # Hinglish recap → native Hindi-accent voice (nadi on coda).
+            speaker = HINGLISH_CONTINUUM_SPEAKER
+
         tts_req = TtsRequest(
             request_id=recap_request.request_id,
             session_id=recap_request.session_id,
             thread_id=recap_request.thread_id,
             text=spoken_text,
             model=model,
-            speaker=self._speaker,
-            language=language or settings.rime_default_language,
+            speaker=speaker,
+            language=language,
             time_scale_factor=speed if model in (RimeModel.CODA, RimeModel.MIST_V3) else None,
             speed_alpha=speed if model == RimeModel.MIST_V2 else None,
             private_track_id=self._private_track_id,

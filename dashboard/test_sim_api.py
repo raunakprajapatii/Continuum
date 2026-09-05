@@ -189,10 +189,11 @@ def test_sim_full_call_one_to_recap() -> None:
     assert "$420" in payload["text"] or "Heads up" in payload["text"]
 
 
-def test_sim_recap_hindi_language_frames() -> None:
+def test_sim_recap_hinglish_language_frames() -> None:
     """
-    The recap request accepts a language; fixed phrasing is localised to
-    Hindi while thread-memory content stays as recorded.
+    The recap request accepts a language; "hi" produces HINGLISH frames —
+    Hindi written in Latin (Roman) letters mixed with English, never
+    Devanagari. Thread-memory content stays as recorded.
     """
     _seed_call_one()
 
@@ -208,11 +209,14 @@ def test_sim_recap_hindi_language_frames() -> None:
     assert recap.status_code == 200
     payload = recap.json()
     assert payload["language"] == "hi"
-    # Hindi frames: freshness flag and next-action framing are localised.
+    assert payload["speaker"] == "nadi", "Hinglish recap must use the Hindi-accent voice (nadi)"
+    # Hinglish (Latin-script) frames: freshness flag and next-action framing.
     assert any(
         marker in payload["text"]
-        for marker in ("सुनिए", "पुष्टि नहीं", "अभी बाकी", "आपकी कार्रवाई", "पहली प्राथमिकता")
+        for marker in ("Sun —", "confirm nahi", "Call beech mein cut", "Aapka move", "Sabse zaroori")
     )
+    # No Devanagari anywhere in the Hinglish recap.
+    assert not any("\u0900" <= ch <= "\u097f" for ch in payload["text"])
     # English is still the default when no language is passed.
     recap_en = client.post(
         "/api/sim/recap",
@@ -266,8 +270,47 @@ def test_barge_intent_action_auto_answer() -> None:
     assert response.json()["intent"] == "ANSWER_CALL"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The command is not one fixed sentence — any Hinglish/Hindi/English
+        # phrasing with a pickup verb must auto-answer (Latin + Devanagari).
+        "call utha lo",
+        "mujhe pta hai call utha lo",
+        "haan, utha lo",
+        "call le lo",
+        "answer kar do",
+        "pick the phone up",
+        "कॉल उठा लो",
+        "मुझे पता है, कॉल उठा लो",
+    ],
+)
+def test_barge_intent_action_auto_answer_any_phrasing(text: str) -> None:
+    response = client.post("/api/sim/barge-intent", json={"text": text})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "ANSWER_CALL"
+    assert body["matched_phrase"]
+
+
 def test_barge_intent_generic_stop_hold_on() -> None:
     response = client.post("/api/sim/barge-intent", json={"text": "Hold on a second"})
+    assert response.status_code == 200
+    assert response.json()["intent"] == "DISMISS_RECAP"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "skip karo",
+        "mujhe pata hai",
+        "samajh gaya",
+        "ruk ja",
+        "मुझे पता है",
+    ],
+)
+def test_barge_intent_generic_stop_hinglish(text: str) -> None:
+    response = client.post("/api/sim/barge-intent", json={"text": text})
     assert response.status_code == 200
     assert response.json()["intent"] == "DISMISS_RECAP"
 
@@ -278,8 +321,17 @@ def test_barge_intent_skip() -> None:
     assert response.json()["intent"] == "DISMISS_RECAP"
 
 
-def test_barge_intent_ambient_ignored() -> None:
-    response = client.post("/api/sim/barge-intent", json={"text": "the weather is nice today"})
+@pytest.mark.parametrize(
+    "text",
+    [
+        "the weather is nice today",
+        "call kar lo",  # "make the call" — not "pick up"
+        "main kal answer karunga",  # "I'll reply tomorrow" — not an answer now
+        "सवाल का जवाब दो",  # "answer the question" — no phone context
+    ],
+)
+def test_barge_intent_ambient_ignored(text: str) -> None:
+    response = client.post("/api/sim/barge-intent", json={"text": text})
     assert response.status_code == 200
     assert response.json()["intent"] == "IGNORE"
 

@@ -15,6 +15,17 @@ export const SESSIONS = {
 
 export const PRIVATE_TRACK_ID = 'continuum-private-whisper'
 
+// ── Spoken language (fixed — no EN/HI UI switch) ─────────────────────────────
+// The website copy is always English; the *voice* layer is Hinglish:
+//   - the mic transcribes Hindi with the Nova-3 Hindi model (`hi` — Deepgram's
+//     `multi` mode is notorious for misdetecting Hindi as Spanish). The
+//     backend romanizes the Devanagari into Latin-script Hinglish, so "hello
+//     भाई कैसे हो" arrives as "hello bhai kaise ho".
+//   - the recap is built/spoken in Hinglish (`hi` selects the Hinglish frames
+//     on the backend and Rime's Hindi-accented voice `nadi`)
+export const STT_LANG = 'hi' // Hindi STT → romanized to Hinglish on the backend
+export const RECAP_LANG = 'hi' // Hinglish spoken recap
+
 // Who records through the shared browser mic. USER = User 1 (you), CALLER =
 // User 2 (Z in the demo narrative). The labels map 1:1 onto the backend
 // Speaker enum used by the Brain extractor.
@@ -33,34 +44,48 @@ export const AUTO_PICKUP = {
   ringDelayS: 30,
 }
 
-// Scripted caller ("mock Z") lines for the auto-pickup option. The text is
-// authored (not transcribed), so it is recorded straight to thread memory as
-// CALLER turns — it never has to be "taken as input" from the mic. gapMs is
-// silence after each line so the presenter can reply.
+// Scripted caller ("mock Z") lines for the India auto-pickup option. The text
+// is authored (not transcribed), so it is recorded straight to thread memory
+// as CALLER turns — it never has to be "taken as input" from the mic. gapMs
+// is silence after each line so the presenter can reply.
+//
+// Z speaks HINGLISH too (Latin script) so the whole India demo — recap,
+// caller, and your voice input — is one Hinglish experience. Z's voice is
+// `taru`, Rime's native Hindi male voice on coda (lang hi); the recap whisper
+// on the private track stays `nadi` (female Hindi).
 export const MOCK_CALLER = {
-  speaker: 'masonry', // distinct male Rime voice — the recap whisper stays 'eyre'
+  speaker: 'taru', // male native Hindi Rime voice (coda) — distinct from the recap whisper 'nadi'
+  language: RECAP_LANG, // 'hi' — Hinglish script, spoken with the Hindi voice
   model: null, // inherit the backend default (coda)
   timeScaleFactor: 1.0, // natural pace, not the sped-up recap cadence
   duckedVolume: 0.3, // while the recap whisper is still playing
   fullVolume: 0.85, // once live (recap finished / interrupted)
   lines: [
-    { text: 'Hey — hello? Can you hear me? The network finally connected us.', gapMs: 2600 },
-    { text: 'So, did you get a chance to check with finance on the volume discount?', gapMs: 3200 },
-    { text: 'And are we still good on the Q3 numbers?', gapMs: 2800 },
-    { text: 'Alright, that works for me. Thanks for sorting it out.', gapMs: 0 },
-  ],
-  // Hindi script used when the dashboard language is Hindi (India demo).
-  linesHi: [
-    { text: 'हे — हैलो? क्या आप मुझे सुन पा रहे हैं? नेटवर्क ने आखिरकार कॉल कनेक्ट कर दी।', gapMs: 2600 },
-    { text: 'तो, क्या आपको फाइनेंस से वॉल्यूम डिस्काउंट के बारे में पूछने का मौका मिला?', gapMs: 3200 },
-    { text: 'और क्या हम Q3 के आँकड़ों पर अभी भी सहमत हैं?', gapMs: 2800 },
-    { text: 'ठीक है, मेरे लिए यह काम कर गया। इसे सुलझाने के लिए धन्यवाद।', gapMs: 0 },
+    { text: 'Hey — hello? Sun paa rahe ho? Network ne finally call connect kar di.', gapMs: 2600 },
+    { text: 'To, kya aapko finance se volume discount ke baare mein poochhne ka mauka mila?', gapMs: 3200 },
+    { text: 'Aur kya hum Q3 numbers par ab bhi agree hain?', gapMs: 2800 },
+    { text: 'Theek hai, meri taraf se sab clear. Sorting out karne ke liye thanks.', gapMs: 0 },
   ],
 }
 
-// ── Barge-in phrases (demo script §03) ───────────────────────────────────────
-export const BARGE_ACTION_PHRASE = 'I know, just pick up the call'
-export const BARGE_STOP_PHRASES = ['Hold on, one second', 'Skip — I remember']
+// ── Barge-in phrase examples (demo script §03) ──────────────────────────────
+// The detector is NOT anchored to one canonical sentence: any English, Hinglish
+// or Hindi phrasing that carries a pickup verb auto-answers ("call utha lo",
+// "mujhe pta hai call utha lo", "pick up the phone"…), and stop phrases halt
+// the recap while the phone keeps ringing. The demo chips below exercise the
+// same intent through different wordings; Devanagari Hindi works too.
+export const BARGE_EXAMPLES = {
+  answer: [
+    'call utha lo',
+    'I know, just pick up the call',
+    'mujhe pta hai, call utha lo',
+  ],
+  stop: [
+    'Hold on, one second',
+    'skip karo',
+    'mujhe pata hai',
+  ],
+}
 
 export const INTENT_LABELS = {
   ANSWER_CALL: 'auto_answer',

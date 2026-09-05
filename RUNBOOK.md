@@ -11,14 +11,20 @@ Open **http://localhost:5173** in Chrome. The launch screen first asks for the
 **test case** you want to run (before any recording):
 
 - **Test case 1 — full recap** (hear the whole recap, then answer)
-- **Test case 2 — barge-in** (mic stays hot; say *"I know, just pick up the call"* to auto-answer)
+- **Test case 2 — barge-in** (mic stays hot; interrupt with any pickup phrasing — *"call utha lo"*, *"I know, just pick up the call"* — to auto-answer)
 - **Test case 3 — 30s time limit & auto-pickup** (network connects the call after ~30 s of ring; a scripted Z joins under the recap)
 
 Pick one, then press **Start the simulation** — the chosen test case is carried
-through the whole run and auto-starts when the callback recap is ready. A
-**language toggle (EN / हिंदी)** in the top bar switches the dashboard copy,
-the recap phrasing and the scripted caller's lines (Rime synthesises Hindi with
-`lang=hin`).
+through the whole run and auto-starts when the callback recap is ready.
+
+**Language model (no switch):** the dashboard copy is English only. The voice
+layer is fixed to Hinglish: the mic transcribes with the Deepgram Nova-3 Hindi
+model (`language=hi` — `multi` misdetects Hindi as Spanish), and the backend
+romanizes the Devanagari to Latin-script Hinglish ("hello भाई कैसे हो" →
+"hello bhai kaise ho"). Gemini writes the recap in Hinglish (Latin script),
+and Rime speaks it with the Hindi-accented voice `nadi` (`lang=hin`).
+The scripted Z in the auto-pickup test case also speaks Hinglish with the male
+Hindi voice `taru`.
 
 ## What the simulation does now (live, no mocks)
 
@@ -28,8 +34,7 @@ the recap phrasing and the scripted caller's lines (Rime synthesises Hindi with
 2. **Drop the call** (interrupted) — the thread memory is extracted and persisted.
 3. **Callback — Rime recap.** Gemini writes the summary from the stored turns and
    Rime dictates it (timeScaleFactor 0.78 — a little faster) on the private whisper track.
-4. **Barge-in or listen** — interrupt with *"I know, just pick up the call"* (auto-answer)
-   or *"Hold on"* (stop-only), then record the reconnected call the same way.
+4. **Barge-in or listen** — interrupt with any pickup phrasing (*"call utha lo"*, *"mujhe pta hai call utha lo"*, *"I know, just pick up the call"*) for auto-answer, or a stop phrase (*"Hold on"*, *"bas karo"*) for stop-only, then record the reconnected call the same way.
 5. **Option C — Mock caller · India auto-pickup** (single-presenter test). Pick *Option C*
    (or **Test case 3** on the launch screen): after ~30 s of ring the network connects the call by itself while
    the recap keeps playing. A scripted Z (Rime male voice, ducked low) joins on the caller

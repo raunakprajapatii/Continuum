@@ -8,8 +8,10 @@ import {
   INTENT_LABELS,
   MOCK_CALLER,
   PRIVATE_TRACK_ID,
+  RECAP_LANG,
   SESSIONS,
   SPEAKERS,
+  STT_LANG,
 } from './config.js'
 import { startRingback, stopRingback } from './callerVoice.js'
 import { isEchoOf, preloadMockLines } from './mockCaller.js'
@@ -86,14 +88,9 @@ export function useSimulation() {
   const [recordingSpeaker, setRecordingSpeaker] = useState(null) // 'USER' | 'CALLER' | null
   const [metrics, setMetrics] = useState(null)
   const [error, setError] = useState(null)
-  // Dashboard language (en | hi) — persisted, follows the toggle in the top bar.
-  const [lang, setLangState] = useState(() => {
-    try {
-      return localStorage.getItem('continuum-lang') || 'en'
-    } catch {
-      return 'en'
-    }
-  })
+  // Website copy is always English (no EN/HI switch) — the Hinglish lives on
+  // the voice layer only (STT_LANG / RECAP_LANG in config.js).
+  const lang = 'en'
   // Test case chosen on the launch screen, before call 1 is recorded.
   const [chosenScenario, setChosenScenario] = useState(null) // 'full' | 'barge' | 'autoPickup' | null
 
@@ -109,7 +106,6 @@ export function useSimulation() {
   const scriptCancelRef = useRef(false)
   const chosenModeRef = useRef(null)
   const recapStateRef = useRef(null)
-  const langRef = useRef(lang)
   const scenarioRef = useRef(null)
   const autoRanRef = useRef(false) // has the launch-chosen scenario been auto-started this callback?
   const resumeRef = useRef(null) // resumes recap playback on a fresh user gesture
@@ -141,16 +137,6 @@ export function useSimulation() {
   useEffect(() => {
     chosenModeRef.current = chosenMode
   }, [chosenMode])
-
-  const setLang = useCallback((code) => {
-    langRef.current = code
-    setLangState(code)
-    try {
-      localStorage.setItem('continuum-lang', code)
-    } catch {
-      /* private mode — non-fatal */
-    }
-  }, [])
 
   // The launch screen asks for the test case *before* recording; carry it into
   // the callback stage and auto-start it the moment the recap text is ready.
@@ -347,7 +333,7 @@ export function useSimulation() {
         const handle = await startMicStream({
           sessionId,
           speaker,
-          language: langRef.current,
+          language: STT_LANG, // Hinglish voice input (Nova-3 hi → romanized on the backend)
           onReady: () => {
             sessionRef.current.listeningFor = { kind: 'turn', speaker, sessionId }
             setListening(true)
@@ -407,7 +393,7 @@ export function useSimulation() {
       try {
         const handle = await startMicStream({
           sessionId,
-          language: langRef.current,
+          language: STT_LANG, // Hinglish voice input (Nova-3 hi → romanized on the backend)
           onReady: () => {
             sessionRef.current.listeningFor = forWhat
             setListening(true)
@@ -536,7 +522,7 @@ export function useSimulation() {
         callerId: CALLER.callerId,
         sessionId: SESSIONS.call2,
         ringWindowS: AUTO_PICKUP.ringDelayS,
-        language: langRef.current,
+        language: RECAP_LANG, // Hinglish recap (backend writes Hinglish frames)
       })
       if (!aliveRef.current) return
       const checks = payload.freshness?.results || []
@@ -572,7 +558,7 @@ export function useSimulation() {
         speaker: current.speaker,
         model: current.model,
         timeScaleFactor: current.time_scale_factor,
-        lang: langRef.current,
+        lang: RECAP_LANG, // 'hi' — Hindi accent voice (nadi) on the Rime side
       })
       objectUrl = fetched.objectUrl
       fetchMs = fetched.fetchMs
@@ -985,13 +971,14 @@ export function useSimulation() {
 
   async function preloadMockCallerAudios() {
     const m = mockRef.current
-    const script = langRef.current === 'hi' ? MOCK_CALLER.linesHi : MOCK_CALLER.lines
+    // Scripted Z always speaks Hinglish (fixed — no language switch).
+    const script = MOCK_CALLER.lines
     try {
       const lines = await preloadMockLines(script, {
         speaker: MOCK_CALLER.speaker,
         model: MOCK_CALLER.model || undefined,
         timeScaleFactor: MOCK_CALLER.timeScaleFactor,
-        lang: langRef.current,
+        lang: MOCK_CALLER.language,
       })
       if (!aliveRef.current) {
         lines.forEach((l) => URL.revokeObjectURL(l.objectUrl))
@@ -1312,7 +1299,6 @@ export function useSimulation() {
     error,
     retryCaps: loadCapabilities,
     lang,
-    setLang,
     chosenScenario,
     selectScenario,
     startCall1,
