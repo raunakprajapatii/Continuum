@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Meridian Commodities &amp; Exports — Live Price Console</title>
+<style>
+  :root {
+    --bg: #0b0e1a;
+    --panel: #12172b;
+    --panel-2: #171d36;
+    --line: #26304e;
+    --ink: #eef1fb;
+    --muted: #8b94b4;
+    --accent: #7c6ff7;
+    --accent-2: #38bdf8;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --font: 'Inter', system-ui, -apple-system, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-2); }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 26px 80px; }
+
+  /* ── Top bar ── */
+  .topbar {
+    display: flex; align-items: center; gap: 18px;
+    padding: 18px 26px; border-bottom: 1px solid var(--line);
+    background: rgba(11, 14, 26, .92); position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(10px);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; letter-spacing: .02em; }
+  .brand-mark {
+    width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 800; font-size: 14px;
+  }
+  .brand small { display: block; color: var(--muted); font-weight: 500; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+  .topbar .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line);
+    background: var(--panel); border-radius: 999px; padding: 8px 13px; font: 500 12px var(--mono); color: var(--muted);
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .pill.live .dot { background: var(--green); box-shadow: 0 0 0 4px rgba(52, 211, 153, .15); animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .pill code { color: var(--ink); }
+
+  /* ── Header ── */
+  header.intro { padding: 46px 0 26px; display: flex; align-items: flex-end; gap: 30px; flex-wrap: wrap; }
+  .eyebrow { color: var(--accent-2); text-transform: uppercase; letter-spacing: .18em; font-size: 11px; font-weight: 700; }
+  h1 { font-size: clamp(26px, 4vw, 40px); margin: 10px 0 8px; letter-spacing: -.03em; }
+  h1 em { color: var(--accent); font-style: normal; }
+  .intro p { color: var(--muted); margin: 0; max-width: 620px; line-height: 1.55; }
+  .intro .meta { margin-left: auto; text-align: right; color: var(--muted); font-size: 12px; line-height: 1.7; }
+  .intro .meta b { color: var(--ink); }
+
+  /* ── Layout ── */
+  .grid { display: grid; grid-template-columns: 1fr 340px; gap: 18px; margin-top: 8px; }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px;
+  }
+  .panel h2 { font-size: 13px; margin: 0 0 4px; letter-spacing: .01em; display: flex; align-items: center; gap: 9px; }
+  .panel .sub { color: var(--muted); font-size: 12px; margin: 0 0 16px; }
+
+  /* ── Product table ── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; color: var(--muted); font: 600 10px var(--mono); text-transform: uppercase;
+    letter-spacing: .1em; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 12px 10px; border-bottom: 1px solid rgba(38, 48, 78, .5); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  .sku { font: 500 11px var(--mono); color: var(--accent-2); }
+  .pname { font-weight: 600; }
+  .pname small { display: block; color: var(--muted); font-weight: 400; font-size: 11px; margin-top: 2px; }
+  .price { font: 700 15px var(--mono); color: #fff; white-space: nowrap; }
+  .price .delta { font-size: 10px; margin-left: 6px; font-weight: 600; }
+  .delta.up { color: var(--red); }
+  .delta.down { color: var(--green); }
+  .delta.flat { color: var(--muted); }
+  .stockbar { width: 74px; height: 5px; border-radius: 3px; background: #232b47; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 7px; }
+  .stockbar span { display: block; height: 100%; border-radius: 3px; background: var(--accent-2); }
+  .stocknum { font: 500 11px var(--mono); color: var(--muted); }
+  .badge { font: 600 9px var(--mono); letter-spacing: .08em; border-radius: 999px; padding: 4px 8px; text-transform: uppercase; }
+  .badge.in { background: rgba(52, 211, 153, .14); color: var(--green); }
+  .badge.low { background: rgba(251, 191, 36, .14); color: var(--amber); }
+  .badge.out { background: rgba(248, 113, 113, .14); color: var(--red); }
+  .note { color: var(--muted); font-size: 11px; }
+  .edit-btn {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+    border-radius: 8px; font: 600 11px var(--mono); padding: 6px 10px; cursor: pointer; transition: .15s;
+  }
+  .edit-btn:hover { border-color: var(--accent); color: #fff; }
+
+  /* ── Actions / demo script ── */
+  .actions { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+  .btn {
+    border: 0; border-radius: 10px; padding: 12px 14px; font: 600 13px var(--font);
+    cursor: pointer; display: flex; align-items: center; gap: 9px; transition: .15s; text-align: left;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-ghost { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); }
+  .btn-ghost:hover { border-color: var(--accent); }
+  .btn:disabled { opacity: .55; cursor: wait; }
+
+  /* live feed */
+  .feed { display: flex; flex-direction: column; gap: 0; }
+  .feed-row { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid rgba(38, 48, 78, .5); font-size: 12px; align-items: baseline; }
+  .feed-row:last-child { border-bottom: 0; }
+  .feed-row time { font: 10px var(--mono); color: var(--muted); flex: 0 0 68px; }
+  .feed-row .fname { font-weight: 600; }
+  .feed-row .fmove { margin-left: auto; font: 600 11px var(--mono); white-space: nowrap; }
+  .feed-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
+
+  /* demo script */
+  .script { counter-reset: step; }
+  .script ol { list-style: none; margin: 0; padding: 0; }
+  .script li {
+    position: relative; padding: 0 0 16px 38px; color: var(--muted); font-size: 12.5px; line-height: 1.55;
+  }
+  .script li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 0; top: -1px; width: 24px; height: 24px; border-radius: 8px;
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--accent-2);
+    font: 700 12px var(--mono); display: grid; place-items: center;
+  }
+  .script li b { color: var(--ink); }
+  .script li code { font-family: var(--mono); font-size: 11px; background: var(--panel-2); padding: 1px 5px; border-radius: 5px; color: var(--accent-2); }
+
+  footer { margin-top: 34px; color: var(--muted); font-size: 11px; display: flex; gap: 16px; align-items: center; }
+  footer .spacer { flex: 1; }
+  .toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(90px);
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+    padding: 11px 18px; border-radius: 11px; font-size: 13px; box-shadow: 0 12px 34px rgba(0,0,0,.45);
+    transition: transform .25s ease; z-index: 20; max-width: 90vw;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="brand-mark">M</span>
+    <div>Meridian Commodities<small>Enterprise live price feed</small></div>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill live"><span class="dot"></span>FEED <code id="feed-state">LIVE</code></span>
+  <span class="pill">PORT <code>8001</code></span>
+  <span class="pill"><span id="clock">--:--:--</span> IST</span>
+</div>
+
+<div class="wrap">
+
+  <header class="intro">
+    <div>
+      <div class="eyebrow">Simulated live data source · Freshness demonstration</div>
+      <h1>Every product price is a <em>freshness fact</em>.</h1>
+      <p>
+        Continuum re-verifies the prices mentioned in a call against this feed
+        <b>before</b> speaking the recap. Mention a product in call one, move the market
+        overnight, and the callback recap flags the change: <em>“Heads up — Basmati Rice was $940, it's now $955.”</em>
+      </p>
+    </div>
+    <div class="meta">
+      <div>Sales rep: <b id="meta-rep">—</b></div>
+      <div>Buyer: <b id="meta-buyer">—</b></div>
+      <div>Feed: <b id="meta-feed">—</b></div>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- ── Catalog ── -->
+    <section class="panel">
+      <h2>📦 Product catalog — live prices</h2>
+      <p class="sub">The conversation extractor keys any product price you mention as <code style="font-family:var(--mono);color:var(--accent-2)">price_&lt;sku&gt;</code>, so the freshness check can look it up here.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>SKU</th><th>Product</th><th>Live price</th><th>Stock</th><th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+
+    <!-- ── Right rail ── -->
+    <div style="display:flex;flex-direction:column;gap:18px;">
+
+      <section class="panel">
+        <h2>🎯 Market controls</h2>
+        <p class="sub">Simulate the world changing between calls.</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-tick">🌙 Simulate overnight market move</button>
+          <button class="btn btn-ghost" id="btn-reset">↺ Reset baseline prices</button>
+        </div>
+        <h2 style="margin-top:18px">📡 Live price feed</h2>
+        <p class="sub">Latest revisions served to the freshness checker.</p>
+        <div class="feed" id="feed"></div>
+      </section>
+
+      <section class="panel">
+        <h2>🎬 Demo script (freshness catch)</h2>
+        <p class="sub">How to show the feature working end to end.</p>
+        <div class="script">
+          <ol>
+            <li><b>Record call one</b> — as the sales rep, quote a product price to Z, e.g. <code>“Basmati rice is $940 per tonne.”</code></li>
+            <li><b>Drop the call</b> — the conversation is stored with <code>price_bas112 = $940</code>.</li>
+            <li><b>Click “Simulate overnight market move”</b> — Basmati moves to <code>$955</code> in the feed.</li>
+            <li><b>Run the callback</b> — during the ring window the freshness check sees <code>$940 → $955</code> and the Rime recap says <em>“Heads up — Basmati Rice price was $940, it's now $955.”</em></li>
+          </ol>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <footer>
+    <span>Continuum × Rime Hackathon — fact-freshness demonstration environment</span>
+    <span class="spacer"></span>
+    <span>API: <code style="font-family:var(--mono)">GET /facts/{key} · GET /api/enterprise/products</code></span>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = new Intl.NumberFormat('en-US');
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  let products = [];
+  let toastTimer = null;
+
+  function showToast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+  }
+
+  function priceDelta(p) {
+    const cur = parseInt(p.current_price.replace(/[^0-9]/g, ''), 10);
+    const base = parseInt(p.base_price.replace(/[^0-9]/g, ''), 10);
+    if (cur > base) return { cls: 'up', text: `▲ +${fmt.format(cur - base)}` };
+    if (cur < base) return { cls: 'down', text: `▼ −${fmt.format(base - cur)}` };
+    return { cls: 'flat', text: '— baseline' };
+  }
+
+  function stockBar(p) {
+    const pct = Math.min(100, Math.round((p.stock / 2000) * 100));
+    const color = p.status === 'LOW_STOCK' ? 'var(--amber)' : 'var(--accent-2)';
+    return `<span class="stockbar"><span style="width:${pct}%;background:${color}"></span></span><span class="stocknum">${fmt.format(p.stock)}</span>`;
+  }
+
+  function badge(p) {
+    if (p.status === 'LOW_STOCK') return '<span class="badge low">low stock</span>';
+    if (p.status === 'OUT_OF_STOCK') return '<span class="badge out">out</span>';
+    return '<span class="badge in">in stock</span>';
+  }
+
+  function renderRows() {
+    $('rows').innerHTML = products.map((p) => {
+      const d = priceDelta(p);
+      return `<tr>
+        <td class="sku">${esc(p.sku)}</td>
+        <td class="pname">${esc(p.name)}<small>${esc(p.category)} · per ${esc(p.unit)} · ${esc(p.price_note)}</small></td>
+        <td><span class="price">${esc(p.current_price)}<span class="delta ${d.cls}">${d.text}</span></span></td>
+        <td>${stockBar(p)}</td>
+        <td>${badge(p)}</td>
+        <td><button class="edit-btn" data-sku="${esc(p.sku)}" data-name="${esc(p.name)}" data-price="${esc(p.current_price)}">Edit price</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderFeed(history) {
+    const feed = $('feed');
+    if (!history || !history.length) {
+      feed.innerHTML = '<div class="feed-empty">No price movements yet — run a market tick or edit a price.</div>';
+      return;
+    }
+    feed.innerHTML = history.slice(0, 6).map((h) => `
+      <div class="feed-row">
+        <time>${h.at.slice(11, 19)}</time>
+        <span class="fname">${esc(h.name)}</span>
+        <span class="fmove">${esc(h.from)} → ${esc(h.to)} <span style="color:var(--muted)">· ${h.via === 'market-tick' ? 'tick' : 'edit'}</span></span>
+      </div>`).join('');
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch('/api/enterprise');
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      products = data.products || [];
+      $('meta-rep').textContent = data.sales_rep || '—';
+      $('meta-buyer').textContent = data.buyer_contact || '—';
+      $('meta-feed').textContent = (data.exchange || '—') + ' · ' + (data.database || '');
+      renderRows();
+      const hist = await (await fetch('/api/enterprise/history')).json();
+      renderFeed(hist.history);
+    } catch (err) {
+      $('feed-state').textContent = 'OFFLINE';
+      showToast('Cannot reach the enterprise feed — is the service running on port 8001?');
+    }
+  }
+
+  async function act(url, successMsg) {
+    const btn = event && event.target;
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch(url, { method: 'POST' });
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      showToast(successMsg || `OK — ${data.count || data.products?.length || ''} products updated`);
+    } catch (err) {
+      showToast('Request failed: ' + err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+      await refresh();
+    }
+  }
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.edit-btn');
+    if (!btn) return;
+    const { sku, name, price } = btn.dataset;
+    const next = prompt(`Set new live price for ${name} (e.g. $955):`, price);
+    if (next == null) return;
+    try {
+      const res = await fetch(`/api/enterprise/products/${sku}/price`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ price: next.trim() }),
+      });
+      if (!res.ok) throw new Error(res.status);
+      showToast(`Price updated for ${name}`);
+    } catch (err) {
+      showToast('Could not update price: ' + err.message);
+    }
+    await refresh();
+  });
+
+  $('btn-tick').addEventListener('click', () => act('/api/enterprise/market-tick', '🌙 Overnight market move applied — prices changed in the feed.'));
+  $('btn-reset').addEventListener('click', () => act('/api/enterprise/reset', 'All prices restored to baseline.'));
+
+  // local clock
+  function tickClock() {
+    const d = new Date();
+    $('clock').textContent = d.toTimeString().slice(0, 8);
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+  refresh();
+  setInterval(refresh, 4000);
+</script>
+</body>
+</html>

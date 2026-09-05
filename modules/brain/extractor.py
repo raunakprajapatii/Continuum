@@ -46,6 +46,69 @@ try:
 except ImportError:
     _HAS_GENAI = False
 
+# Price tokens: "$940", "$8,940", "$420.50"
+_PRICE_TOKEN_RE = re.compile(r"[$€£]\s*\d+(?:,\d{3})*(?:\.\d{1,2})?")
+# Spoken dollar amounts: "940 dollars", "1,275 US dollars"
+_SPOKEN_DOLLARS_RE = re.compile(
+    r"\b(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s+(?:us\s+)?dollars?\b", re.IGNORECASE
+)
+
+# Optional enterprise catalog (mocks/enterprise) — used to key product prices
+# mentioned in the call as ``price_<sku>`` facts so the freshness checker can
+# re-verify them against the Meridian live price feed.  Guarded so the brain
+# never hard-depends on demo data being installed.
+_ENTERPRISE_CATALOG = None
+
+
+def _get_enterprise_catalog():
+    """Return the enterprise catalog module, or None when unavailable."""
+    global _ENTERPRISE_CATALOG
+    if _ENTERPRISE_CATALOG is None:
+        try:
+            from mocks.enterprise import catalog as _mod
+            _ENTERPRISE_CATALOG = _mod
+        except Exception:  # pragma: no cover - demo data absent
+            _ENTERPRISE_CATALOG = False
+    return _ENTERPRISE_CATALOG or None
+
+
+def _prompt_catalog() -> str:
+    """
+    Compact enterprise price-feed block for the Gemini extraction prompt.
+
+    Lists every product alias → ``price_<sku>`` key so the LLM keys product
+    prices exactly like the heuristic extractor does, letting the freshness
+    checker resolve them against the enterprise feed.  Falls back to a note
+    when the demo catalog is not installed.
+    """
+    catalog = _get_enterprise_catalog()
+    if catalog is not None and getattr(catalog, "COMPACT_CATALOG", ""):
+        return catalog.COMPACT_CATALOG
+    return "(no enterprise price feed configured — use stable keys like 'price_usd')"
+
+
+def _normalize_price_value(value: str) -> str:
+    """
+    Normalise a stored price value so freshness string-equality holds.
+
+    The enterprise database stores prices as ``"$940"`` / ``"$8,940"``; the
+    extractor (Gemini or heuristic) may capture ``"$940 per tonne"`` or
+    ``"940 dollars"``.  Returning just the canonical money token keeps the
+    freshness comparison exact and avoids a spurious CHANGED flag.
+    """
+    if not value:
+        return value
+    token = _PRICE_TOKEN_RE.search(value)
+    if token:
+        return token.group(0)
+    spoken = _SPOKEN_DOLLARS_RE.search(value)
+    if spoken:
+        try:
+            return f"${int(float(spoken.group(1).replace(',', ''))):,}"
+        except ValueError:
+            return value
+    return value
+
 
 class ConversationExtractor:
     """
@@ -109,27 +172,48 @@ class ConversationExtractor:
         """Extract prices, rates, and numbers that may go stale."""
         facts: list[TimeSensitiveFact] = []
 
-        # Currency prices: $400, $420.50, €500, £1,200
-        price_patterns = [
-            r"([$€£]\s*\d+(?:,\d{3})*(?:\.\d{1,2})?)",
-            r"(\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+hundred(?:\s+\w+)?\s+dollars\b)",
-            r"(\b\d+\s+dollars\b)",
-        ]
-
-        for pat in price_patterns:
-            match = re.search(pat, full_text, re.IGNORECASE)
-            if match:
-                raw = match.group(1).strip()
-                val = "$400" if "four hundred" in raw.lower() else raw
-                facts.append(
-                    TimeSensitiveFact(
-                        key="price_usd",
-                        label="Unit price",
-                        value=val,
-                        recorded_at=now,
-                    )
+        # ── Enterprise product prices (freshness demo) ───────────────────────
+        # If the call mentions a Meridian product by name, key its price as
+        # ``price_<sku>`` so the freshness checker resolves it against the
+        # enterprise live price feed (mocks/enterprise).
+        catalog = _get_enterprise_catalog()
+        product_mentions = (
+            catalog.find_price_mentions(full_text) if catalog is not None else []
+        )
+        for mention in product_mentions:
+            facts.append(
+                TimeSensitiveFact(
+                    key=f"price_{mention['sku'].lower()}",
+                    label=f"{mention['name']} price",
+                    value=_normalize_price_value(mention["price"]),
+                    recorded_at=now,
                 )
-                break
+            )
+
+        # ── Generic currency prices: $400, $420.50, €500, £1,200 ────────────
+        # Only used when no enterprise product price was identified, so a
+        # product-specific fact never competes with the generic price_usd.
+        if not product_mentions:
+            price_patterns = [
+                r"([$€£]\s*\d+(?:,\d{3})*(?:\.\d{1,2})?)",
+                r"(\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+hundred(?:\s+\w+)?\s+dollars\b)",
+                r"(\b\d+\s+dollars\b)",
+            ]
+
+            for pat in price_patterns:
+                match = re.search(pat, full_text, re.IGNORECASE)
+                if match:
+                    raw = match.group(1).strip()
+                    val = "$400" if "four hundred" in raw.lower() else raw
+                    facts.append(
+                        TimeSensitiveFact(
+                            key="price_usd",
+                            label="Unit price",
+                            value=_normalize_price_value(val),
+                            recorded_at=now,
+                        )
+                    )
+                    break
 
         # Deadlines / dates
         deadline_match = re.search(
@@ -284,6 +368,7 @@ class ConversationExtractor:
             f"[{t.speaker.value}]: {t.text}" for t in valid_turns
         ]
         transcript_str = "\n".join(transcript_lines)
+        enterprise_catalog = _prompt_catalog()
 
         prompt = f"""
 You are the Brain of Continuum, a voice continuity assistant. Your memory
@@ -326,6 +411,10 @@ STRICT CONSTRAINTS (content will be spoken aloud via Rime TTS):
 5. time_sensitive_facts: concrete values that could go stale (prices,
    deadlines, quantities, statuses, reference numbers), one per fact with
    a stable key.
+
+ENTERPRISE PRICE FEED (use these EXACT keys for product prices so the
+freshness checker can re-verify them against the live enterprise feed):
+{enterprise_catalog}
 
 6. key_names: names, ticket numbers, and codes mentioned (used for
    spell()).
@@ -379,15 +468,23 @@ Transcript:
                 )
                 for c in data.get("commitments", [])
             ]
-            facts = [
-                TimeSensitiveFact(
-                    key=f.get("key", "fact"),
-                    label=f.get("label", "Fact"),
-                    value=str(f.get("value", "")),
-                    recorded_at=now,
+            facts = []
+            for f in data.get("time_sensitive_facts", []):
+                key = f.get("key", "fact")
+                value = str(f.get("value", ""))
+                # Product price facts must match the enterprise database
+                # exactly ("$940 per tonne" → "$940") or the freshness check
+                # would report a spurious CHANGED.
+                if key.startswith("price_"):
+                    value = _normalize_price_value(value)
+                facts.append(
+                    TimeSensitiveFact(
+                        key=key,
+                        label=f.get("label", "Fact"),
+                        value=value,
+                        recorded_at=now,
+                    )
                 )
-                for f in data.get("time_sensitive_facts", [])
-            ]
 
             headline = self._clean_headline(data.get("headline", "Call completed."))
 
