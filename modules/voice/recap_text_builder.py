@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from shared.schemas import (
+    FactCheckResult,
     FreshnessResult,
     FreshnessStatus,
     RecapUrgency,
@@ -205,13 +206,20 @@ class RecapTextBuilder:
         summary: ThreadSummary,
         freshness: FreshnessResult,
         urgency: RecapUrgency = RecapUrgency.STANDARD,
+        language: str = "en",
     ) -> str:
         """
         Build and validate the Rime-formatted recap string.
 
+        ``language`` (``en`` / ``hi``) localises the fixed recap phrasing
+        (freshness flags, open-item and next-action frames). Thread-memory
+        content — headline, open items, commitments — is kept exactly as it
+        was recorded so nothing is ever invented or translated on the fly.
+
         Raises ``RecapTextValidationError`` if the generated text violates any
         of the 8 Rime prompting guide rules.
         """
+        hi = (language or "").strip().lower().startswith("hi")
         parts: list[str] = []
 
         # ── Rule 1: Headline first, no preamble ───────────────────────────────
@@ -228,14 +236,14 @@ class RecapTextBuilder:
         # ── Rule 5: Freshness flags early ─────────────────────────────────────
         if freshness.any_changed:
             for fact_result in freshness.results:
-                flag = fact_result.spoken_flag
+                flag = self._spoken_flag(fact_result, hi=hi)
                 if flag:
                     parts.append(flag)
 
         # ── Standard detail: open items ───────────────────────────────────────
         if urgency in (RecapUrgency.STANDARD, RecapUrgency.EXTENDED):
             if summary.open_items:
-                open_text = self._format_open_items(summary.open_items)
+                open_text = self._format_open_items(summary.open_items, hi=hi)
                 if open_text:
                     parts.append(open_text)
 
@@ -243,19 +251,19 @@ class RecapTextBuilder:
         if urgency == RecapUrgency.EXTENDED:
             for fact_result in freshness.results:
                 if fact_result.status == FreshnessStatus.UNAVAILABLE:
-                    flag = fact_result.spoken_flag
+                    flag = self._spoken_flag(fact_result, hi=hi)
                     if flag:
                         parts.append(flag)
 
             if summary.is_interrupted and summary.last_spoken_turn_text:
                 interrupted_note = self._format_interrupted(
-                    summary.last_spoken_turn_text
+                    summary.last_spoken_turn_text, hi=hi
                 )
                 if interrupted_note:
                     parts.append(interrupted_note)
 
         # ── Rule 8: End with next action ──────────────────────────────────────
-        next_action = self._format_next_action(summary)
+        next_action = self._format_next_action(summary, hi=hi)
         if next_action:
             parts.append(next_action)
 
@@ -342,13 +350,37 @@ class RecapTextBuilder:
         return headline
 
     @staticmethod
-    def _format_open_items(open_items: list[str]) -> str:
+    def _spoken_flag(result: FactCheckResult, hi: bool = False) -> str:
+        """
+        Ready-to-insert spoken flag for a fact check outcome.
+
+        English uses ``FactCheckResult.spoken_flag`` (Rime rule 5 phrasing);
+        Hindi gets the same two facts in a localised frame.
+        """
+        if result.status == FreshnessStatus.CHANGED and result.live_value is not None:
+            if hi:
+                return (
+                    f"सुनिए — {result.label} पहले {result.cached_value} था, "
+                    f"अब {result.live_value} है."
+                )
+            return result.spoken_flag
+        if result.status == FreshnessStatus.UNAVAILABLE:
+            if hi:
+                return (
+                    f"मैं {result.label} की पुष्टि नहीं कर पाया — "
+                    f"आखिरी आँकड़ा {result.cached_value} था."
+                )
+            return result.spoken_flag
+        return ""
+
+    @staticmethod
+    def _format_open_items(open_items: list[str], hi: bool = False) -> str:
         """Convert the first open item into a spoken fragment ≤ 20 words."""
         if not open_items:
             return ""
         item = open_items[0].strip()
         # Prefix with "so," (Rule 3 — one disfluency max)
-        sentence = f"So, still open: {item}"
+        sentence = f"अभी बाकी है: {item}" if hi else f"So, still open: {item}"
         # Truncate if over word limit
         words = sentence.split()
         if len(words) > 20:
@@ -356,19 +388,23 @@ class RecapTextBuilder:
         return sentence
 
     @staticmethod
-    def _format_interrupted(last_text: str) -> str:
+    def _format_interrupted(last_text: str, hi: bool = False) -> str:
         """Note the call was interrupted mid-sentence."""
         preview = last_text.strip().rstrip("- ").strip()
         if not preview:
             return ""
-        sentence = f"They were cut off mid-sentence — they said: \"{preview}\"."
+        sentence = (
+            f"कॉल बीच में कट गई — वे कह रहे थे: \"{preview}\"."
+            if hi
+            else f"They were cut off mid-sentence — they said: \"{preview}\"."
+        )
         words = sentence.split()
         if len(words) > 20:
-            sentence = "The call dropped mid-sentence."
+            sentence = "The call dropped mid-sentence." if not hi else "कॉल बीच में कट गई."
         return sentence
 
     @staticmethod
-    def _format_next_action(summary: ThreadSummary) -> str:
+    def _format_next_action(summary: ThreadSummary, hi: bool = False) -> str:
         """Rule 8 — the single most useful next action."""
         # First unresolved commitment from the user is the clearest next action
         for commitment in summary.commitments:
@@ -377,7 +413,7 @@ class RecapTextBuilder:
                 words = action.split()
                 if len(words) > 18:
                     action = " ".join(words[:17]) + "."
-                return f"Your move: {action}"
+                return f"आपकी कार्रवाई: {action}" if hi else f"Your move: {action}"
 
         # Fall back to first open item
         if summary.open_items:
@@ -385,6 +421,6 @@ class RecapTextBuilder:
             words = item.split()
             if len(words) > 17:
                 item = " ".join(words[:16]) + "."
-            return f"Top priority: {item}"
+            return f"पहली प्राथमिकता: {item}" if hi else f"Top priority: {item}"
 
         return ""

@@ -63,13 +63,14 @@ export async function endCallOne({ sessionId, callerId, callerName, interrupted 
   return response.json()
 }
 
-export async function buildRecap({ callerId, sessionId, ringWindowS }) {
+export async function buildRecap({ callerId, sessionId, ringWindowS, language }) {
   const response = await request('/api/sim/recap', {
     method: 'POST',
     body: JSON.stringify({
       caller_id: callerId,
       session_id: sessionId,
       ring_window_s: ringWindowS,
+      language,
     }),
   })
   return response.json()
@@ -89,11 +90,11 @@ export async function classifyIntent(text) {
  * The response MUST carry the private-track header — this mirrors the
  * dashboard's fence: recap audio is bound to the user's whisper track only.
  */
-export async function fetchRimeAudio(text, { trackId, speaker, model } = {}) {
+export async function fetchRimeAudio(text, { trackId, speaker, model, timeScaleFactor, lang } = {}) {
   const started = performance.now()
   const response = await request('/api/rime/tts', {
     method: 'POST',
-    body: JSON.stringify({ text, speaker, model }),
+    body: JSON.stringify({ text, speaker, model, time_scale_factor: timeScaleFactor, lang }),
   })
   const track = response.headers.get('X-Continuum-Track')
   if (trackId && track !== trackId) {

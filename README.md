@@ -127,41 +127,46 @@ USE_MOCKS=true pytest evaluation/ -v
 
 The web app (`web/`) is a staged, interactive version of the demo-day script
 (`Continuum_Demo_Website_Script.pdf`). It walks through the full experience
-end to end:
+end to end — **no mocks, everything live**:
 
-1. **Call one (yesterday)** — Z (a clearly-labelled simulated caller) talks to
-   *you*; your replies are transcribed **live through Deepgram** via the
-   backend, then the line drops mid-sentence.
-2. **Thread memory** — the interrupted conversation is extracted and persisted
-   to the Thread Memory Store.
-3. **Callback (next morning)** — Z rings in. During the ring window the recap
-   is generated, the freshness check runs ($400 → $420) and **Rime** speaks the
-   recap on the private whisper track only.
+1. **Call one (yesterday)** — a live two-way conversation. User 1 and User 2
+   both record real voice turns through the browser mic: pick **Record User 1**
+   or **Record User 2**, speak, **Stop & save turn**. Every segment is
+   transcribed **live through Deepgram** and stored to the Thread Memory Store
+   in real time.
+2. **Line drops** — the interrupted conversation is extracted (Gemini) and
+   persisted to the Thread Memory Store.
+3. **Callback (next morning)** — Z rings in. During the ring window **Gemini**
+   writes the recap from the stored turns and **Rime** dictates it on the
+   private whisper track only (timeScaleFactor 0.78 — a little faster).
 4. **Barge-in or listen** — you either let the full recap play (then answer),
    or interrupt with *“I know, just pick up the call”* (auto-answer) vs a
    generic *“Hold on”* (stop-only) — measured and logged live on screen.
-5. **Connected** — you pick up already caught up; the caller never hears the
-   recap.
+5. **Connected** — you pick up already caught up; record the reconnected call
+   the same way, then end it.
 
 Run it with the real providers (this is the judged path):
 
 ```bash
-# terminal 1 — mock freshness data source (port 8001)
-python -m mocks.mock_freshness
-
-# terminal 2 — dashboard control surface (port 8000)
-# .env must have USE_MOCKS=false plus RIME_API_KEY + DEEPGRAM_API_KEY
+# terminal 1 — dashboard control surface (port 8000)
+# .env must have USE_MOCKS=false plus RIME_API_KEY + DEEPGRAM_API_KEY + GEMINI_API_KEY
 # (make sure your shell does NOT export USE_MOCKS=true — the process env
 #  overrides .env in pydantic-settings)
 USE_MOCKS=false uvicorn dashboard.server:app --port 8000
 
-# terminal 3 — Vite dev server (port 5173)
+# terminal 2 — Vite dev server (port 5173)
 cd web && pnpm install && pnpm dev
 # no pnpm? node_modules is committed-checked-in already, so either works:
 #   cd web && node_modules/.bin/vite
 ```
 
-Open http://localhost:5173 in Chrome and press **Start the simulation**.
+Open http://localhost:5173 in Chrome. The launch screen first asks which **test
+case** to run — **1) full recap**, **2) barge-in**, or **3) 30s time limit &
+auto-pickup** — then press **Start the simulation**; the chosen test case is
+carried through the whole run and auto-starts at the callback recap. A
+**language toggle (EN / हिंदी)** in the top bar switches the dashboard copy,
+the recap phrasing and the scripted caller's lines (Rime speaks Hindi via
+`lang=hin`).
 
 > **Note on the LiveKit transport path** (`modules/transport/`): it needs the
 > venv Python 3.12 (LiveKit plugins refuse 3.13+). Run it as
@@ -179,10 +184,10 @@ Behaviour guarantees enforced by the UI:
 - **Dual-track isolation** is visualised live: caller lane = ringback/live
   call, whisper lane = Rime recap. `X-Continuum-Track` is checked by the UI on
   every recap response.
-- **Mocks / rehearsal mode:** with `USE_MOCKS=true` the dashboard boots but
-  Rime + Deepgram are gated (the readiness card explains what to change). The
-  conversation can still be rehearsed with typed suggested replies and the
-  simulated caller voice.
+- **No mocks:** both speakers are recorded live through Deepgram; there is no
+  simulated caller voice and no mock data source. The freshness step still
+  runs during the recap — without a live data source it reports facts as
+  unverified and omits staleness flags.
 
 ### Environment Variables
 
@@ -193,6 +198,7 @@ Key variables:
 | Variable | Description |
 |----------|-------------|
 | `RIME_API_KEY` | **Required.** Your Rime API key. |
+| `GEMINI_API_KEY` | Writes the recap summary. Without it, a deterministic heuristic summary is used. |
 | `LIVEKIT_URL` | LiveKit Cloud WebSocket URL. |
 | `LIVEKIT_API_KEY` | LiveKit API key. |
 | `LIVEKIT_API_SECRET` | LiveKit API secret. |

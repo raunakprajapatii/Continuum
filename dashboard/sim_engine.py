@@ -250,6 +250,7 @@ async def build_reconnect_recap(
     caller_id: str,
     session_id: str,
     ring_window_s: float = 25.0,
+    language: str = "en",
 ) -> dict[str, Any]:
     """
     Produce a ready-to-speak recap for a returning caller.
@@ -260,6 +261,9 @@ async def build_reconnect_recap(
           -> FreshnessChecker.check()          (step 1, timed)
           -> RecapTextBuilder.build()          (step 2, timed — Rime lint enforced)
           -> RimeTtsClient.make_request()      (step 3, timed)
+
+    ``language`` localises the fixed recap phrasing (en / hi) — thread-memory
+    content is kept exactly as it was recorded.
 
     Returns a JSON-safe payload containing the final spoken text plus the
     freshness results and per-step timings for the on-screen event log.
@@ -290,6 +294,7 @@ async def build_reconnect_recap(
         summary=recap_request.summary,
         freshness=freshness,
         urgency=recap_request.urgency,
+        language=language,
     )
     step2_ms = int((time.monotonic() - t0) * 1000)
 
@@ -298,6 +303,7 @@ async def build_reconnect_recap(
     tts_request = get_tts_client().make_request(
         recap_request=recap_request,
         spoken_text=text,
+        language=language,
     )
     step3_ms = int((time.monotonic() - t0) * 1000)
 

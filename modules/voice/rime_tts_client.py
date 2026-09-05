@@ -52,9 +52,9 @@ _SPELL_MARKER = "spell("
 # On Coda and Mist v3, timeScaleFactor < 1.0 produces faster speech.
 # On Mist v2, speedAlpha < 1.0 produces faster speech.
 _URGENCY_SPEED: dict[RecapUrgency, float] = {
-    RecapUrgency.HEADLINE_ONLY: 0.75,   # sprint through headline
-    RecapUrgency.STANDARD:      0.85,   # blueprint default
-    RecapUrgency.EXTENDED:      0.90,   # unhurried, natural breathing room
+    RecapUrgency.HEADLINE_ONLY: 0.72,   # sprint through headline
+    RecapUrgency.STANDARD:      0.78,   # faster than natural speech, still clear
+    RecapUrgency.EXTENDED:      0.85,   # slightly unhurried, natural breathing room
 }
 
 
@@ -89,9 +89,14 @@ class RimeTtsClient:
         self,
         recap_request: RecapRequest,
         spoken_text: str,
+        language: Optional[str] = None,
     ) -> TtsRequest:
         """
         Build and return a ``TtsRequest``.
+
+        ``language`` (BCP-47, e.g. ``en`` / ``hi``) overrides the default
+        ``settings.rime_default_language`` — used by the demo dashboard to
+        follow the presenter's language choice.
 
         Raises ``ValueError`` if:
         - ``spoken_text`` is empty
@@ -114,7 +119,7 @@ class RimeTtsClient:
             text=spoken_text,
             model=model,
             speaker=self._speaker,
-            language=settings.rime_default_language,
+            language=language or settings.rime_default_language,
             time_scale_factor=speed if model in (RimeModel.CODA, RimeModel.MIST_V3) else None,
             speed_alpha=speed if model == RimeModel.MIST_V2 else None,
             private_track_id=self._private_track_id,

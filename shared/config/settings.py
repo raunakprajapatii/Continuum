@@ -72,12 +72,13 @@ class Settings(BaseSettings):
         description="BCP-47 language code for Rime TTS output.",
     )
     rime_time_scale_factor: float = Field(
-        0.85,
+        0.78,
         ge=0.5,
         le=2.0,
         description=(
-            "Global speed multiplier for Coda / Mist v3. ~0.85 speeds up "
-            "connective filler in the recap per blueprint § 12."
+            "Global speed multiplier for Coda / Mist v3. <1.0 speeds up — "
+            "0.78 makes the recap comfortably faster than natural speech "
+            "while staying intelligible."
         ),
     )
 
@@ -146,6 +147,13 @@ class Settings(BaseSettings):
         description=(
             "API key for the LLM provider (Gemini / Anthropic). "
             "Leave empty if using Antigravity's built-in model access."
+        ),
+    )
+    gemini_api_key: str = Field(
+        "",
+        description=(
+            "Google AI Studio / Gemini API key used by the ConversationExtractor "
+            "to generate the recap summary. Read from GEMINI_API_KEY in .env."
         ),
     )
 

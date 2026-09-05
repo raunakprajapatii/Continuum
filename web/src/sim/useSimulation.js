@@ -1,32 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api.js'
 import {
-  CALL1_USER_SUGGESTIONS,
-  CALL1_Z_LINES,
-  CALL2_USER_SUGGESTIONS,
-  CALL2_Z_LINES,
+  AUTO_PICKUP,
   CALLER,
   CLOCK,
   EVENT_KINDS,
   INTENT_LABELS,
+  MOCK_CALLER,
   PRIVATE_TRACK_ID,
   SESSIONS,
+  SPEAKERS,
 } from './config.js'
-import {
-  speakCallerLine,
-  startRingback,
-  stopCallerSpeech,
-  stopRingback,
-} from './callerVoice.js'
+import { startRingback, stopRingback } from './callerVoice.js'
+import { isEchoOf, preloadMockLines } from './mockCaller.js'
 import { micStreamSupported, startMicStream } from './userMic.js'
 
 export const PHASE = {
   BOOT: 'boot', // probing the backend
   IDLE: 'idle', // ready to start / setup help shown
-  CALL1: 'call1', // yesterday's live conversation with Z
+  CALL1: 'call1', // first live two-way conversation
   MEMORY: 'memory', // interrupted thread persisted, before the callback
   RECAP: 'recap', // next-morning callback: RINGING + private recap
-  CONNECTED: 'connected', // second call live (after recap / barge-in)
+  CONNECTED: 'connected', // second live conversation (after recap / barge-in)
   COMPLETED: 'completed', // evidence panel
 }
 
@@ -37,6 +32,7 @@ export const RECAP_STATE = {
   HALTED: 'halted', // barge-in stopped the whisper
   DONE: 'done', // recap finished naturally
   ERROR: 'error', // Rime unreachable (no fallback audio)
+  NEEDS_GESTURE: 'needs_gesture', // browser blocked autoplay — tap to play
 }
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -82,23 +78,95 @@ export function useSimulation() {
   const [micError, setMicError] = useState(null)
   const [interimText, setInterimText] = useState('')
   const [bargeResult, setBargeResult] = useState(null)
-  const [chosenMode, setChosenMode] = useState(null) // 'full' | 'barge'
+  const [chosenMode, setChosenMode] = useState(null) // 'full' | 'barge' | 'autoPickup'
+  const [pickupCountdownS, setPickupCountdownS] = useState(null) // seconds until network auto-pickup (mock caller option)
+  const [mockLineSpoken, setMockLineSpoken] = useState(null) // { index, text, ducked } while a scripted Z line is audible
+  const [mockError, setMockError] = useState(null)
   const [memoryBusy, setMemoryBusy] = useState(false)
-  const [activeSpeaker, setActiveSpeaker] = useState(null) // 'caller' when Z speaks
+  const [recordingSpeaker, setRecordingSpeaker] = useState(null) // 'USER' | 'CALLER' | null
   const [metrics, setMetrics] = useState(null)
   const [error, setError] = useState(null)
+  // Dashboard language (en | hi) — persisted, follows the toggle in the top bar.
+  const [lang, setLangState] = useState(() => {
+    try {
+      return localStorage.getItem('continuum-lang') || 'en'
+    } catch {
+      return 'en'
+    }
+  })
+  // Test case chosen on the launch screen, before call 1 is recorded.
+  const [chosenScenario, setChosenScenario] = useState(null) // 'full' | 'barge' | 'autoPickup' | null
 
   // ── mutable session plumbing ────────────────────────────────────────────────
   const aliveRef = useRef(true)
   const sessionRef = useRef({ mic: null, audioEl: null, audioUrl: null, listeningFor: null })
+  const recordingRef = useRef(null) // { speaker, sessionId, texts: [] } while a turn is being recorded
   const clockRef = useRef({ anchor: new Date(), perf: performance.now() })
   const anchorsRef = useRef({})
   const eventsRef = useRef([])
-  const waitersRef = useRef([]) // resolvers waiting for the user's spoken/typed reply
   const handledBargeRef = useRef(false)
   const bargeArmedRef = useRef(false)
   const scriptCancelRef = useRef(false)
-  const sessionKeyRef = useRef(0) // bumped to invalidate in-flight script loops
+  const chosenModeRef = useRef(null)
+  const recapStateRef = useRef(null)
+  const langRef = useRef(lang)
+  const scenarioRef = useRef(null)
+  const autoRanRef = useRef(false) // has the launch-chosen scenario been auto-started this callback?
+  const resumeRef = useRef(null) // resumes recap playback on a fresh user gesture
+  const chooseRecapModeRef = useRef(null)
+  // Auto-pickup (mock caller) plumbing — India ring behaviour.
+  const pickupRef = useRef(null) // { deadline, timer } — network connects the call after ~30 s of ring
+  const pickedUpRef = useRef(false) // the call got connected while the recap plays/stays ready
+  const connectedEventRef = useRef(false) // has a call.connected event been pushed for this callback take?
+  const mockRef = useRef({
+    lines: [], // [{ index, text, gapMs, objectUrl }] prepared by preloadMockLines
+    urls: [], // object URLs to revoke on teardown
+    idx: 0,
+    started: false,
+    pending: false, // pickup happened before the lines finished synthesizing
+    ducked: true, // caller voice reduced while the recap whisper plays
+    el: null, // currently playing Audio element
+    timer: null, // inter-line gap timer
+    recent: [], // [{ text, untilMs }] echo-filter window for the line on the speakers
+  })
+  const doPickupRef = useRef(null)
+  const liveNowRef = useRef(null)
+  const handleAutoSpeechRef = useRef(null)
+
+  // Mirror phase-critical values into refs so async handlers always read the
+  // latest value instead of a stale render closure.
+  useEffect(() => {
+    recapStateRef.current = recapState
+  }, [recapState])
+  useEffect(() => {
+    chosenModeRef.current = chosenMode
+  }, [chosenMode])
+
+  const setLang = useCallback((code) => {
+    langRef.current = code
+    setLangState(code)
+    try {
+      localStorage.setItem('continuum-lang', code)
+    } catch {
+      /* private mode — non-fatal */
+    }
+  }, [])
+
+  // The launch screen asks for the test case *before* recording; carry it into
+  // the callback stage and auto-start it the moment the recap text is ready.
+  const selectScenario = useCallback((scenario) => {
+    scenarioRef.current = scenario
+    setChosenScenario(scenario)
+  }, [])
+
+  useEffect(() => {
+    if (phase !== PHASE.RECAP) return
+    if (recapState !== RECAP_STATE.READY || !recap) return
+    const scenario = scenarioRef.current
+    if (!scenario || autoRanRef.current) return
+    autoRanRef.current = true
+    if (chooseRecapModeRef.current) chooseRecapModeRef.current(scenario)
+  }, [phase, recapState, recap])
 
   const pushEvent = useCallback((name, detail = '', meta = {}) => {
     const clock = clockRef.current
@@ -138,16 +206,21 @@ export function useSimulation() {
 
   const clearAll = useCallback(() => {
     aliveRef.current = false
-    stopCallerSpeech()
     stopRingback()
     stopMicSafe()
     teardownRecapAudio()
+    stopMockCaller()
+    clearPickupTimer()
     eventsRef.current = []
-    waitersRef.current = []
     anchorsRef.current = {}
     handledBargeRef.current = false
     bargeArmedRef.current = false
     scriptCancelRef.current = true
+    pickedUpRef.current = false
+    connectedEventRef.current = false
+    pickupRef.current = null
+    chosenModeRef.current = null
+    recapStateRef.current = null
     setPhase(PHASE.IDLE)
     setRecapState(null)
     setCallStateLabel('IDLE')
@@ -160,12 +233,17 @@ export function useSimulation() {
     setAudioStatus('idle')
     setBargeResult(null)
     setChosenMode(null)
+    setPickupCountdownS(null)
+    setMockLineSpoken(null)
+    setMockError(null)
     setMemoryBusy(false)
     setMetrics(null)
     setError(null)
     setInterimText('')
     setListening(false)
-    setActiveSpeaker(null)
+    setRecordingSpeaker(null)
+    autoRanRef.current = false
+    resumeRef.current = null
     setTimeout(() => {
       aliveRef.current = true
       scriptCancelRef.current = false
@@ -184,8 +262,10 @@ export function useSimulation() {
       s.mic = null
     }
     s.listeningFor = null
+    recordingRef.current = null
     setListening(false)
     setInterimText('')
+    setRecordingSpeaker(null)
   }
 
   const teardownRecapAudio = useCallback(() => {
@@ -217,41 +297,98 @@ export function useSimulation() {
       s.mic = null
     }
     s.listeningFor = null
+    recordingRef.current = null
     setListening(false)
     setInterimText('')
+    setRecordingSpeaker(null)
   }, [])
 
-  // ── transcript plumbing ─────────────────────────────────────────────────────
-  const resolveWaiters = useCallback((text) => {
-    if (waitersRef.current.length) {
-      const resolve = waitersRef.current.shift()
-      resolve(text)
-      return true
-    }
-    return false
-  }, [])
-
-  // Waits for the presenter's next spoken or typed reply.
-  const waitForUserReply = useCallback((timeoutMs) => {
-    return Promise.race([
-      new Promise((resolve) => waitersRef.current.push(resolve)),
-      wait(timeoutMs).then(() => null),
-    ])
-  }, [])
-
-  const recordAndForwardUserTurn = useCallback(
-    async (text, sessionId) => {
+  // ── live turn recording (both speakers share the browser mic) ──────────────
+  const commitTurn = useCallback(
+    async (speaker, text, sessionId, { mock = false } = {}) => {
       const cleaned = (text || '').trim()
       if (!cleaned) return
+      const label = SPEAKERS[speaker]?.label || speaker
+      const turn = { id: uid(), speaker, text: cleaned, live: false, mock }
+      if (sessionId === SESSIONS.call2) {
+        setCall2Turns((prev) => [...prev, turn])
+      } else {
+        setCall1Turns((prev) => [...prev, turn])
+      }
+      pushEvent('turn.recorded', `${label}${mock ? ' · scripted' : ''}: ${cleaned}`, {
+        session_id: sessionId,
+        speaker,
+        chars: cleaned.length,
+        source: mock ? 'mock' : 'live',
+      })
       try {
-        await api.recordTurn({ sessionId, speaker: 'USER', text: cleaned })
+        await api.recordTurn({ sessionId, speaker, text: cleaned })
       } catch {
         /* memory is best-effort during the live call */
       }
-      resolveWaiters(cleaned)
     },
-    [resolveWaiters],
+    [pushEvent],
   )
+
+  const startTurn = useCallback(
+    async (speaker, sessionId) => {
+      if (!caps || !caps.stt || !caps.stt.enabled) {
+        setMicError('Live mic needs the backend running with USE_MOCKS=false and a Deepgram key.')
+        return null
+      }
+      if (!micStreamSupported()) {
+        setMicError('This browser cannot capture the microphone.')
+        return null
+      }
+      stopMic()
+      setMicError(null)
+      recordingRef.current = { speaker, sessionId, texts: [] }
+      try {
+        const handle = await startMicStream({
+          sessionId,
+          speaker,
+          language: langRef.current,
+          onReady: () => {
+            sessionRef.current.listeningFor = { kind: 'turn', speaker, sessionId }
+            setListening(true)
+            setRecordingSpeaker(speaker)
+          },
+          onTranscript: (m) => {
+            if (!m.isFinal) {
+              setInterimText(m.text)
+              return
+            }
+            setInterimText('')
+            const rec = recordingRef.current
+            if (rec && rec.speaker === speaker && rec.sessionId === sessionId) {
+              rec.texts.push(m.text)
+            }
+          },
+          onError: (e) => {
+            setMicError(e.message || 'Speech-to-text error')
+            setListening(false)
+            setRecordingSpeaker(null)
+          },
+        })
+        sessionRef.current.mic = handle
+        return handle
+      } catch (err) {
+        recordingRef.current = null
+        setMicError(err.message || 'Could not access the microphone')
+        return null
+      }
+    },
+    [caps, stopMic],
+  )
+
+  // Stop recording and commit the accumulated segment as one stored turn.
+  const endTurn = useCallback(() => {
+    const rec = recordingRef.current
+    stopMic()
+    if (!rec) return
+    const text = (rec.texts || []).join(' ').trim()
+    if (text) commitTurn(rec.speaker, text, rec.sessionId)
+  }, [commitTurn, stopMic])
 
   const handleBargeRef = useRef(null)
 
@@ -270,6 +407,7 @@ export function useSimulation() {
       try {
         const handle = await startMicStream({
           sessionId,
+          language: langRef.current,
           onReady: () => {
             sessionRef.current.listeningFor = forWhat
             setListening(true)
@@ -280,10 +418,11 @@ export function useSimulation() {
               return
             }
             setInterimText('')
-            if (sessionRef.current.listeningFor === 'barge' && handleBargeRef.current) {
+            const mode = sessionRef.current.listeningFor
+            if (mode === 'barge' && handleBargeRef.current) {
               handleBargeRef.current(m.text)
-            } else {
-              recordAndForwardUserTurn(m.text, sessionId)
+            } else if (mode === 'auto' && handleAutoSpeechRef.current) {
+              handleAutoSpeechRef.current(m.text)
             }
           },
           onError: (e) => {
@@ -298,59 +437,16 @@ export function useSimulation() {
         return null
       }
     },
-    [caps, recordAndForwardUserTurn, stopMic],
+    [caps, stopMic],
   )
 
-  // ── Z (simulated caller) line runner ────────────────────────────────────────
-  const runCallerScript = useCallback(
-    async (lines, { sessionId, turnSetter, endHint }) => {
-      scriptCancelRef.current = false
-      for (const line of lines) {
-        if (!aliveRef.current || scriptCancelRef.current) return 'done'
-        setActiveSpeaker('caller')
-        turnSetter((prev) => [...prev, { id: uid(), speaker: 'CALLER', text: line.text, live: true }])
-        try {
-          await api.recordTurn({ sessionId, speaker: 'CALLER', text: line.text })
-        } catch {
-          /* best-effort */
-        }
-        if (endHint) endHint(line.hint)
-
-        let speakResult
-        if (line.cut) {
-          // Drop the call mid-sentence: cut the voice and finish this script.
-          speakResult = await Promise.race([
-            speakCallerLine(line.text),
-            wait(2400).then(() => {
-              stopCallerSpeech()
-              return 'cut'
-            }),
-          ])
-        } else {
-          await speakCallerLine(line.text)
-          speakResult = 'done'
-        }
-        setActiveSpeaker(null)
-        if (!aliveRef.current || scriptCancelRef.current) return 'done'
-        turnSetter((prev) => prev.map((t, i) => (i === prev.length - 1 ? { ...t, live: false } : t)))
-        if (speakResult === 'cut') return 'cut'
-
-        // Pause for the presenter's reply before Z continues.
-        await waitForUserReply(line.waitMs || 9000)
-        if (!aliveRef.current || scriptCancelRef.current) return 'done'
-      }
-      return 'done'
-    },
-    [waitForUserReply],
-  )
-
-  // ── Call one (yesterday) ────────────────────────────────────────────────────
+  // ── Call one (yesterday, live two-way) ─────────────────────────────────────
   const simulateDropRef = useRef(null)
   const simulateDrop = useCallback(async () => {
     if (!aliveRef.current) return
     scriptCancelRef.current = true
     stopMic()
-    stopCallerSpeech()
+    stopRingback()
     pushEvent('call.disconnect_detected', 'caller=Z · no closing turn · mid-sentence', { since_event: 'call.connected', delta_ms: deltaSince('call.connected') ?? 0 })
     setCallStateLabel('DISCONNECTED')
     setPhase(PHASE.MEMORY)
@@ -387,32 +483,11 @@ export function useSimulation() {
     setPhase(PHASE.CALL1)
     setCall1Turns([])
     remember('call.connected')
-    pushEvent('call.connected', 'caller=Z · session call-1 · normal call begins')
-    if (caps && caps.stt && caps.stt.enabled) {
-      await startMic('convo', SESSIONS.call1)
-    } else {
-      setMicError('Typed replies mode — click a suggested line under the transcript to speak as "You".')
+    pushEvent('call.connected', 'caller=Z · session call-1 · live two-way call begins')
+    if (!caps || !caps.stt || !caps.stt.enabled) {
+      setMicError('Deepgram STT unavailable — check the backend / .env (USE_MOCKS=false + DEEPGRAM_API_KEY).')
     }
-    const outcome = await runCallerScript(CALL1_Z_LINES, {
-      sessionId: SESSIONS.call1,
-      turnSetter: setCall1Turns,
-      endHint: () => {},
-    })
-    if (outcome === 'cut' && aliveRef.current) simulateDropRef.current?.()
-  }, [caps, pushEvent, remember, runCallerScript, setClock, startMic])
-
-  // Typed / suggested "You" line — the deterministic fallback for the mic path.
-  const suggestReply = useCallback(
-    (text, listKey) => {
-      if (!aliveRef.current || !text.trim()) return
-      const sessionId = listKey === 'call2' ? SESSIONS.call2 : SESSIONS.call1
-      const turnSetter = listKey === 'call2' ? setCall2Turns : setCall1Turns
-      turnSetter((prev) => [...prev, { id: uid(), speaker: 'USER', text, live: false }])
-      api.recordTurn({ sessionId, speaker: 'USER', text }).catch(() => {})
-      resolveWaiters(text)
-    },
-    [resolveWaiters],
-  )
+  }, [caps, pushEvent, remember, setClock])
 
   // ── Callback recap (next morning) ───────────────────────────────────────────
   const continueToCallback = useCallback(async () => {
@@ -429,6 +504,23 @@ export function useSimulation() {
     handledBargeRef.current = false
     bargeArmedRef.current = false
     scriptCancelRef.current = false
+    chosenModeRef.current = null
+    recapStateRef.current = RECAP_STATE.READY
+    autoRanRef.current = false
+    resumeRef.current = null
+    pickedUpRef.current = false
+    connectedEventRef.current = false
+    clearPickupTimer()
+    stopMockCaller()
+    // The network auto-pickup clock starts the moment Z's call rings in
+    // (India ring behaviour) — the mock-caller option connects at this deadline.
+    pickupRef.current = {
+      deadline: performance.now() + AUTO_PICKUP.ringDelayS * 1000,
+      timer: null,
+    }
+    setPickupCountdownS(null)
+    setMockLineSpoken(null)
+    setMockError(null)
     teardownRecapAudio()
     setAudioStatus('idle')
     setSpokenIdx(0)
@@ -443,7 +535,8 @@ export function useSimulation() {
       const payload = await api.buildRecap({
         callerId: CALLER.callerId,
         sessionId: SESSIONS.call2,
-        ringWindowS: 25,
+        ringWindowS: AUTO_PICKUP.ringDelayS,
+        language: langRef.current,
       })
       if (!aliveRef.current) return
       const checks = payload.freshness?.results || []
@@ -470,76 +563,159 @@ export function useSimulation() {
     if (!current) return
     setAudioStatus('loading')
     setRecapState(RECAP_STATE.LOADING)
+    recapStateRef.current = RECAP_STATE.LOADING
+    let objectUrl
+    let fetchMs = 0
     try {
-      const { objectUrl, fetchMs } = await api.fetchRimeAudio(current.text, {
+      const fetched = await api.fetchRimeAudio(current.text, {
         trackId: PRIVATE_TRACK_ID,
         speaker: current.speaker,
         model: current.model,
+        timeScaleFactor: current.time_scale_factor,
+        lang: langRef.current,
       })
-      if (!aliveRef.current) {
-        URL.revokeObjectURL(objectUrl)
-        return
-      }
-      teardownRecapAudio()
-      const audio = new Audio(objectUrl)
-      sessionRef.current.audioEl = audio
-      sessionRef.current.audioUrl = objectUrl
-      const sentences = current.sentences || []
-      const lengths = sentences.map((s) => s.length)
-      const totalChars = lengths.reduce((a, b) => a + b, 0) || 1
-      // Rime may return a streaming WAV whose duration is unknown until fully
-      // buffered — estimate from the character count so captions stay in sync.
-      const estimatedMs = Math.max(2000, (totalChars / 13) * 1000)
-      const playbackStart = performance.now()
-      const progress = () => {
-        const d = audio.duration
-        if (Number.isFinite(d) && d > 0) return Math.min(1, audio.currentTime / d)
-        return Math.min(1, (performance.now() - playbackStart) / estimatedMs)
-      }
-      audio.ontimeupdate = () => {
-        const target = progress() * totalChars
-        let acc = 0
-        let idx = 0
-        for (let i = 0; i < sentences.length; i += 1) {
-          acc += lengths[i]
-          if (target <= acc) {
-            idx = i
-            break
-          }
-          idx = i
-        }
-        setSpokenIdx(idx)
-      }
-      audio.onended = () => {
-        if (!aliveRef.current) return
-        setRecapState(RECAP_STATE.DONE)
-        setAudioStatus('idle')
-        setSpokenIdx(Math.max(0, sentences.length - 1))
-        // A finished recap no longer needs the barge-in mic.
-        if (sessionRef.current.listeningFor === 'barge') stopMic()
-      }
-      await audio.play()
-      if (aliveRef.current) {
-        setAudioStatus('playing')
-        setRecapState(RECAP_STATE.PLAYING)
-        pushEvent('recap.tts_first_audio', `Δ ${deltaSince('match') ?? '?'}ms from match`, { since_event: 'thread.match_found', delta_ms: deltaSince('match') ?? null, rime_fetch_ms: Math.round(fetchMs) })
-      }
+      objectUrl = fetched.objectUrl
+      fetchMs = fetched.fetchMs
     } catch (err) {
       if (aliveRef.current) {
         setAudioStatus('error')
         setRecapState(RECAP_STATE.ERROR)
+        recapStateRef.current = RECAP_STATE.ERROR
         setError(`Rime did not return audio: ${err.message}`)
+        // Mock run: if the network already picked up and the recap cannot play,
+        // drop the ducking and go live with the scripted caller instead.
+        if (chosenModeRef.current === 'autoPickup' && pickedUpRef.current) {
+          liveNowRef.current?.({ from: 'recap-error' })
+        }
       }
+      return
+    }
+    if (!aliveRef.current) {
+      URL.revokeObjectURL(objectUrl)
+      return
+    }
+    teardownRecapAudio()
+    const audio = new Audio(objectUrl)
+    sessionRef.current.audioEl = audio
+    sessionRef.current.audioUrl = objectUrl
+    const sentences = current.sentences || []
+    const lengths = sentences.map((s) => s.length)
+    const totalChars = lengths.reduce((a, b) => a + b, 0) || 1
+    // Rime may return a streaming WAV whose duration is unknown until fully
+    // buffered — estimate from the character count so captions stay in sync.
+    const estimatedMs = Math.max(2000, (totalChars / 13) * 1000)
+    const playbackStart = performance.now()
+    const progress = () => {
+      const d = audio.duration
+      if (Number.isFinite(d) && d > 0) return Math.min(1, audio.currentTime / d)
+      return Math.min(1, (performance.now() - playbackStart) / estimatedMs)
+    }
+    audio.ontimeupdate = () => {
+      const target = progress() * totalChars
+      let acc = 0
+      let idx = 0
+      for (let i = 0; i < sentences.length; i += 1) {
+        acc += lengths[i]
+        if (target <= acc) {
+          idx = i
+          break
+        }
+        idx = i
+      }
+      setSpokenIdx(idx)
+    }
+    audio.onended = () => {
+      if (!aliveRef.current) return
+      setRecapState(RECAP_STATE.DONE)
+      recapStateRef.current = RECAP_STATE.DONE
+      setAudioStatus('idle')
+      setSpokenIdx(Math.max(0, sentences.length - 1))
+      // A finished recap no longer needs the barge-in mic.
+      if (sessionRef.current.listeningFor === 'barge') stopMic()
+      // Auto-pickup mock run: if the network already connected the call, the
+      // presenter is now live with the scripted caller.
+      if (chosenModeRef.current === 'autoPickup' && pickedUpRef.current) {
+        liveNowRef.current?.({ from: 'recap-end' })
+      }
+    }
+    // Everything that must happen once playback actually started (status,
+    // first-audio event, mock-caller join) — shared by the direct play and the
+    // gesture-retry path below.
+    const afterStart = async () => {
+      if (!aliveRef.current) return
+      setAudioStatus('playing')
+      setRecapState(RECAP_STATE.PLAYING)
+      recapStateRef.current = RECAP_STATE.PLAYING
+      pushEvent('recap.tts_first_audio', `Δ ${deltaSince('match') ?? '?'}ms from match`, { since_event: 'thread.match_found', delta_ms: deltaSince('match') ?? null, rime_fetch_ms: Math.round(fetchMs) })
+      // If the network pickup already fired while Rime was fetching, let the
+      // scripted caller join (ducked) now that the recap is actually playing.
+      if (chosenModeRef.current === 'autoPickup' && pickedUpRef.current) {
+        kickMockCaller()
+      }
+    }
+    try {
+      await audio.play()
+      await afterStart()
+    } catch (err) {
+      // Autoplay blocked: the Rime synthesis outlived the click's ~5s
+      // user-activation window, so the browser refused play().  Keep the audio
+      // warm, retry on the next interaction, and expose a visible play button
+      // (a fresh gesture always starts playback).  No silent TTS substitution.
+      if (!aliveRef.current) return
+      setAudioStatus('blocked')
+      setRecapState(RECAP_STATE.NEEDS_GESTURE)
+      recapStateRef.current = RECAP_STATE.NEEDS_GESTURE
+      const retry = () => {
+        cleanup()
+        resume()
+      }
+      const cleanup = () => {
+        window.removeEventListener('pointerdown', retry, true)
+        window.removeEventListener('keydown', retry, true)
+      }
+      const resume = async () => {
+        const el = sessionRef.current.audioEl
+        if (!el || !aliveRef.current) return
+        try {
+          await el.play()
+          await afterStart()
+        } catch {
+          /* still blocked — the button stays visible */
+        }
+      }
+      resumeRef.current = resume
+      window.addEventListener('pointerdown', retry, true)
+      window.addEventListener('keydown', retry, true)
     }
   }, [recap, teardownRecapAudio, pushEvent, deltaSince, stopMic])
 
   const chooseRecapMode = useCallback(
     async (mode) => {
       setChosenMode(mode)
+      chosenModeRef.current = mode
       handledBargeRef.current = false
-      bargeArmedRef.current = mode === 'barge'
       setBargeResult(null)
       setError(null)
+      setMockError(null)
+      if (mode === 'autoPickup') {
+        // Mock caller / India auto-pickup: the recap plays on the private
+        // track, the network connects the call ~30 s into the ring, and the
+        // scripted caller then joins at reduced volume under the recap.
+        bargeArmedRef.current = true
+        armPickupCountdown()
+        await playRecapAudio()
+        if (!aliveRef.current) return
+        // Arm the presenter's mic for replies / commands once the recap is
+        // actually playing (the auto-pickup handler also opens it if needed).
+        if (!sessionRef.current.mic && caps && caps.stt && caps.stt.enabled) {
+          await startMic('auto', SESSIONS.call2)
+        } else if (!caps || !caps.stt || !caps.stt.enabled) {
+          setMicError('Mic unavailable for your replies — the scripted caller and recap still play. Live STT needs USE_MOCKS=false + a DEEPGRAM_API_KEY.')
+        }
+        preloadMockCallerAudios() // background — lines start after pickup
+        return
+      }
+      bargeArmedRef.current = mode === 'barge'
       await playRecapAudio()
       if (mode === 'barge') {
         if (caps && caps.stt && caps.stt.enabled) {
@@ -551,12 +727,23 @@ export function useSimulation() {
     },
     [caps, playRecapAudio, startMic],
   )
+  chooseRecapModeRef.current = chooseRecapMode
 
   // Turn full-duplex listening on/off mid-recap without re-playing audio.
   const armBargeMic = useCallback(async () => {
     if (!aliveRef.current) return
+    if (chosenModeRef.current === 'autoPickup') {
+      // Mock run — resume the presenter's voice capture after it was muted.
+      if (caps && caps.stt && caps.stt.enabled) {
+        await startMic('auto', SESSIONS.call2)
+      } else {
+        setMicError('Mic unavailable — the scripted caller and recap still play.')
+      }
+      return
+    }
     bargeArmedRef.current = true
     setChosenMode('barge')
+    chosenModeRef.current = 'barge'
     if (caps && caps.stt && caps.stt.enabled) {
       await startMic('barge', SESSIONS.call2)
     } else {
@@ -622,10 +809,361 @@ export function useSimulation() {
       const s = sessionRef.current
       if (!s.audioEl || s.audioEl.paused || s.audioEl.ended) return
       bargeArmedRef.current = true
+      if (chosenModeRef.current === 'autoPickup') {
+        // Mock run — phrase test behaves like live speech (only recognised
+        // commands interrupt; other words are replies that the recap ignores).
+        if (handleAutoSpeechRef.current) await handleAutoSpeechRef.current(text)
+        return
+      }
       await handleBargeUtterance(text)
     },
-    [handleBargeUtterance, phase],
+    [handleAutoSpeechRef, handleBargeUtterance, phase],
   )
+
+  // ── Auto-pickup + scripted mock caller (India ring behaviour) ──────────────
+  // In India the network connects an incoming call by itself after ~30 s of
+  // ringing (AUTO_PICKUP.ringDelayS). The recap keeps playing on the private
+  // track when that happens, and a scripted (mock) caller joins on the caller
+  // lane at reduced volume so the recap stays intelligible. The mock lines are
+  // authored text — they are recorded straight to thread memory as CALLER turns
+  // and never read back from the mic; only the presenter's voice is transcribed
+  // (and echoes of the speaker output are filtered out).
+
+  function clearPickupTimer() {
+    const p = pickupRef.current
+    if (p && p.timer) {
+      clearInterval(p.timer)
+      p.timer = null
+    }
+    setPickupCountdownS(null)
+  }
+
+  // Arm the network auto-pickup clock (deadline was set when the ring began).
+  function armPickupCountdown() {
+    const p = pickupRef.current
+    if (!p || p.timer || pickedUpRef.current) return
+    const tick = () => {
+      const remainingMs = p.deadline - performance.now()
+      if (remainingMs <= 0) {
+        clearInterval(p.timer)
+        p.timer = null
+        setPickupCountdownS(null)
+        if (doPickupRef.current) doPickupRef.current()
+      } else {
+        setPickupCountdownS(Math.max(1, Math.ceil(remainingMs / 1000)))
+      }
+    }
+    tick()
+    p.timer = setInterval(tick, 250)
+  }
+
+  function stopMockCaller() {
+    const m = mockRef.current
+    clearTimeout(m.timer)
+    m.timer = null
+    if (m.el) {
+      try {
+        m.el.pause()
+      } catch {
+        /* noop */
+      }
+      m.el.onended = null
+      m.el = null
+    }
+    m.started = false
+    m.idx = 0
+    m.pending = false
+    m.recent = []
+    setMockLineSpoken(null)
+    m.urls.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url)
+      } catch {
+        /* noop */
+      }
+    })
+    m.urls = []
+    m.lines = []
+  }
+
+  function mockVolume() {
+    return mockRef.current.ducked ? MOCK_CALLER.duckedVolume : MOCK_CALLER.fullVolume
+  }
+
+  function setMockDucked(ducked) {
+    mockRef.current.ducked = Boolean(ducked)
+    if (mockRef.current.el) mockRef.current.el.volume = mockVolume()
+  }
+
+  function scheduleNextMockLine(nextIdx, gapMs) {
+    const m = mockRef.current
+    clearTimeout(m.timer)
+    m.timer = setTimeout(() => playMockLineAt(nextIdx), Math.max(0, gapMs || 0))
+  }
+
+  function playMockLineAt(index) {
+    const m = mockRef.current
+    if (!aliveRef.current || !m.lines) return
+    if (index >= m.lines.length) {
+      m.el = null
+      m.started = false
+      setMockLineSpoken(null)
+      return
+    }
+    const line = m.lines[index]
+    m.idx = index + 1
+    if (!line || !line.objectUrl) {
+      scheduleNextMockLine(m.idx, 700)
+      return
+    }
+    try {
+      const audio = new Audio(line.objectUrl)
+      audio.volume = mockVolume()
+      m.el = audio
+      // Track the line in the echo window while it is audible from the speakers.
+      const now = performance.now()
+      m.recent = m.recent.filter((r) => now <= r.untilMs)
+      m.recent.push({
+        text: line.text,
+        untilMs: now + line.text.length * 85 + 1400,
+      })
+      setMockLineSpoken({ index, text: line.text, ducked: m.ducked })
+      commitTurn('CALLER', line.text, SESSIONS.call2, { mock: true })
+      pushEvent('caller.mock_line', `${CALLER.name} · scripted${m.ducked ? ' (ducked under recap)' : ''}: “${line.text}”`, {
+        speaker: 'CALLER',
+        mock: true,
+        ducked: m.ducked,
+        chars: line.text.length,
+      })
+      audio.onended = () => {
+        if (m.el === audio) m.el = null
+        setMockLineSpoken(null)
+        if (!aliveRef.current) return
+        scheduleNextMockLine(m.idx, line.gapMs ?? 0)
+      }
+      audio.play().catch(() => {
+        if (m.el === audio) m.el = null
+        scheduleNextMockLine(m.idx, 700)
+      })
+    } catch {
+      scheduleNextMockLine(m.idx, 700)
+    }
+  }
+
+  // Start the scripted caller, but never over a recap that is still loading or
+  // over dead air — only once the recap is actually playing (or is gone).
+  function kickMockCaller() {
+    const m = mockRef.current
+    if (!aliveRef.current || !pickedUpRef.current) return
+    if (!m.lines.length || recapStateRef.current === RECAP_STATE.LOADING || recapStateRef.current === RECAP_STATE.READY) {
+      m.pending = true
+      return
+    }
+    m.pending = false
+    if (!m.started) {
+      m.started = true
+      playMockLineAt(m.idx)
+    }
+  }
+
+  // The presenter interrupted mid-line (or answered) — stop the current line and
+  // move the script along after a short breath so the presenter can talk.
+  function skipCurrentMockLine() {
+    const m = mockRef.current
+    clearTimeout(m.timer)
+    if (m.el) {
+      try {
+        m.el.pause()
+      } catch {
+        /* noop */
+      }
+      m.el = null
+      setMockLineSpoken(null)
+    }
+    scheduleNextMockLine(m.idx, 1400)
+  }
+
+  async function preloadMockCallerAudios() {
+    const m = mockRef.current
+    const script = langRef.current === 'hi' ? MOCK_CALLER.linesHi : MOCK_CALLER.lines
+    try {
+      const lines = await preloadMockLines(script, {
+        speaker: MOCK_CALLER.speaker,
+        model: MOCK_CALLER.model || undefined,
+        timeScaleFactor: MOCK_CALLER.timeScaleFactor,
+        lang: langRef.current,
+      })
+      if (!aliveRef.current) {
+        lines.forEach((l) => URL.revokeObjectURL(l.objectUrl))
+        return
+      }
+      m.lines = lines
+      m.urls = lines.map((l) => l.objectUrl)
+      if (!lines.length && aliveRef.current) {
+        // Every scripted line failed to synthesise — say so instead of
+        // leaving the mock caller silently mute.
+        setMockError(
+          'Mock caller voice could not be prepared (Rime unavailable). The recap still plays; the scripted Z lines are skipped.'
+        )
+      }
+      if (m.pending) kickMockCaller()
+    } catch (err) {
+      if (aliveRef.current) {
+        setMockError(`Mock caller voice could not be prepared: ${err.message}`)
+      }
+    }
+  }
+
+  // Network auto-pickup fires after ~30 s of ring (India). If the recap is
+  // still playing it keeps playing and the scripted caller joins ducked.
+  const doPickup = useCallback(async () => {
+    if (!aliveRef.current || pickedUpRef.current) return
+    pickedUpRef.current = true
+    clearPickupTimer()
+    stopRingback()
+    remember('auto_pickup')
+    pushEvent('call.auto_answer_triggered', `network auto-pickup — ring exceeded ${AUTO_PICKUP.ringDelayS}s`, {
+      mode: 'network',
+      ring_delay_s: AUTO_PICKUP.ringDelayS,
+      since_event: 'call.inbound_ring',
+      delta_ms: deltaSince('auto_pickup') ?? 0,
+    })
+    pushEvent('call.connected', `auto-connected after ${AUTO_PICKUP.ringDelayS}s ring — recap keeps playing on your private track`, { mode: 'network' })
+    connectedEventRef.current = true
+    setCallStateLabel('CONNECTED')
+    const rs = recapStateRef.current
+    if (rs === RECAP_STATE.DONE || rs === RECAP_STATE.ERROR || rs === RECAP_STATE.HALTED) {
+      // Nothing left to hear — go straight to the live conversation.
+      if (liveNowRef.current) liveNowRef.current({ from: 'pickup' })
+      return
+    }
+    // Recap is ready, loading or already playing: the call connects underneath
+    // it and the scripted caller joins at reduced volume when audio starts.
+    setMockDucked(true)
+    kickMockCaller()
+    if (!sessionRef.current.mic) await startMic('auto', SESSIONS.call2)
+  }, [deltaSince, pushEvent, remember, startMic])
+
+  // Enter the connected live stage (phase CONNECTED) with the presenter's mic
+  // auto-armed and the scripted caller continuing at normal volume.
+  const liveNow = useCallback(
+    async ({ from = 'auto' } = {}) => {
+      if (!aliveRef.current) return
+      pickedUpRef.current = true
+      clearPickupTimer()
+      stopRingback()
+      setMockDucked(false)
+      teardownRecapAudio()
+      setRecapState(null)
+      recapStateRef.current = null
+      setAudioStatus('idle')
+      setSpokenIdx(0)
+      setCallStateLabel('CONNECTED')
+      setPhase(PHASE.CONNECTED)
+      if (!connectedEventRef.current) {
+        pushEvent('call.connected', 'caller=Z · you are live with the scripted caller', { mode: from === 'barge' ? 'barge' : 'manual' })
+        connectedEventRef.current = true
+      }
+      kickMockCaller()
+      if (!sessionRef.current.mic) await startMic('auto', SESSIONS.call2)
+    },
+    [pushEvent, startMic, teardownRecapAudio],
+  )
+
+  // A recognised interrupt while the recap plays in the mock run. Only explicit
+  // voice commands stop the recap — ordinary replies never do (unlike option A,
+  // where any live speech is treated as a barge-in).
+  async function stopRecapForBarge(rawText, intent) {
+    if (!aliveRef.current || !rawText) return
+    const s = sessionRef.current
+    remember('barge_detected')
+    pushEvent('barge_in.detected', `phrase="${rawText}"`, { since_event: 'recap.tts_first_audio', delta_ms: deltaSince('barge_detected') ?? 0 })
+    const haltStart = performance.now()
+    if (s.audioEl) {
+      try {
+        s.audioEl.pause()
+      } catch {
+        /* noop */
+      }
+    }
+    const haltedMs = Math.max(0, Math.round(performance.now() - haltStart))
+    setRecapState(RECAP_STATE.HALTED)
+    recapStateRef.current = RECAP_STATE.HALTED
+    setAudioStatus('idle')
+    pushEvent('tts.playback_halted', `Δ ${haltedMs}ms from barge-in`, { since_event: 'barge_in.detected', delta_ms: haltedMs })
+    const action = INTENT_LABELS[intent] || intent
+    pushEvent('barge_in.intent_classified', `intent=${action}`, { intent, raw: rawText })
+    setBargeResult({ intent, action, phrase: rawText, haltedMs })
+    if (intent === 'ANSWER_CALL') {
+      if (!pickedUpRef.current) {
+        pickedUpRef.current = true
+        clearPickupTimer()
+        remember('call.auto_answer_triggered')
+        pushEvent('call.auto_answer_triggered', `caller=${CALLER.name} · answered from barge-in during the mock run`, {
+          mode: 'barge',
+          since_event: 'barge_in.intent_classified',
+          delta_ms: deltaSince('call.auto_answer_triggered') ?? 0,
+        })
+        connectedEventRef.current = true
+        pushEvent('call.connected', 'barge-answered — you are live with the scripted caller', { mode: 'barge' })
+      } else {
+        skipCurrentMockLine()
+      }
+      // Answered by voice before the 30 s ring — skip the opening "network
+      // connected us" line (the connection was not automatic).
+      if (!mockRef.current.started) mockRef.current.idx = 1
+      setCallStateLabel('CONNECTED')
+      if (liveNowRef.current) liveNowRef.current({ from: 'barge' })
+      return
+    }
+    // DISMISS_RECAP — stop only. If the call already auto-connected we go live;
+    // otherwise we keep ringing and the network pickup connects it at ~30 s.
+    if (pickedUpRef.current) {
+      skipCurrentMockLine()
+      if (liveNowRef.current) liveNowRef.current({ from: 'dismiss' })
+    }
+  }
+
+  // Presenter voice while the mock-caller option is active. Echoes of the
+  // scripted caller line (speaker output leaking into the mic) are dropped;
+  // recognised commands stop the recap; everything else is just the presenter's
+  // turn and is recorded once the call is connected.
+  const handleAutoSpeech = useCallback(
+    async (rawText) => {
+      const text = (rawText || '').trim()
+      if (!aliveRef.current || !text) return
+      const now = performance.now()
+      const m = mockRef.current
+      m.recent = m.recent.filter((r) => now <= r.untilMs)
+      if (m.recent.some((r) => isEchoOf(r.text, text))) {
+        setInterimText('')
+        pushEvent('caller.echo_filtered', `dropped mic echo of scripted Z: “${text}”`, { raw: text })
+        return
+      }
+      setInterimText('')
+      const s = sessionRef.current
+      const recapPlaying = Boolean(s.audioEl) && !s.audioEl.paused && !s.audioEl.ended
+      if (recapPlaying) {
+        let intent = null
+        try {
+          intent = (await api.classifyIntent(text)).intent || null
+        } catch {
+          intent = null
+        }
+        if (intent === 'ANSWER_CALL' || intent === 'DISMISS_RECAP') {
+          await stopRecapForBarge(text, intent)
+          return
+        }
+        // Plain speech while the recap plays → the recap keeps going; the turn
+        // is only recorded once the presenter is actually connected.
+      }
+      if (pickedUpRef.current) await commitTurn('USER', text, SESSIONS.call2)
+    },
+    [commitTurn, pushEvent],
+  )
+  handleAutoSpeechRef.current = handleAutoSpeech
+  doPickupRef.current = doPickup
+  liveNowRef.current = liveNow
 
   // ── Second call / wrap-up ───────────────────────────────────────────────────
   const advanceToConnected = useCallback(async () => {
@@ -633,39 +1171,46 @@ export function useSimulation() {
     scriptCancelRef.current = false
     stopMic()
     stopRingback()
-    stopCallerSpeech()
     teardownRecapAudio()
     setCallStateLabel('CONNECTED')
     setRecapState(null)
     setPhase(PHASE.CONNECTED)
     pushEvent('call.connected', 'caller=Z · live again — you are already caught up')
-    if (caps && caps.stt && caps.stt.enabled) {
-      await startMic('convo', SESSIONS.call2)
-    }
-    const outcome = await runCallerScript(CALL2_Z_LINES, {
-      sessionId: SESSIONS.call2,
-      turnSetter: setCall2Turns,
-      endHint: () => {},
-    })
-    if (outcome === 'done' && aliveRef.current) {
-      // Presenter ends the call when ready.
-    }
-  }, [caps, pushEvent, runCallerScript, startMic, stopMic, teardownRecapAudio])
+  }, [pushEvent, stopMic, teardownRecapAudio])
   const advanceToConnectedRef = useRef(null)
   advanceToConnectedRef.current = advanceToConnected
 
   const answerCall = useCallback(async () => {
     if (!aliveRef.current || phase !== PHASE.RECAP) return
+    if (chosenModeRef.current === 'autoPickup') {
+      // Mock run — answering sends the presenter straight into the live stage
+      // with the scripted caller (auto-captured turns on both sides).
+      stopRingback()
+      if (!pickedUpRef.current) {
+        pickedUpRef.current = true
+        clearPickupTimer()
+        connectedEventRef.current = true
+        pushEvent('call.connected', 'caller=Z · answered manually — mock run continues live', { mode: 'manual' })
+        // Answered before the ring window ended — skip the "network connected
+        // us" opening line of the script.
+        if (!mockRef.current.started) mockRef.current.idx = 1
+      }
+      setCallStateLabel('CONNECTED')
+      if (liveNowRef.current) liveNowRef.current({ from: 'manual' })
+      return
+    }
     stopMic()
     stopRingback()
     await advanceToConnected()
-  }, [advanceToConnected, phase, stopMic])
+  }, [advanceToConnected, phase, stopMic, pushEvent])
 
   const endCall = useCallback(async () => {
     if (!aliveRef.current) return
     scriptCancelRef.current = true
     stopMic()
-    stopCallerSpeech()
+    stopMockCaller()
+    clearPickupTimer()
+    teardownRecapAudio()
     setPhase(PHASE.COMPLETED)
     setCallStateLabel('COMPLETED')
     pushEvent('call.completed', 'second call ended normally')
@@ -687,18 +1232,26 @@ export function useSimulation() {
     const detected = findEvent('barge_in.detected')
     const autoAnswer = findEvent('call.auto_answer_triggered')
     const changed = log.find((e) => e.name === 'freshness.discrepancy_found')
-    const connected = log.find((e) => e.name === 'call.connected' && e.detail.includes('caught up'))
+    let answerToConnectMs = null
+    if (autoAnswer) {
+      const connectedAfter = log.find((e) => e.name === 'call.connected' && e.epoch >= autoAnswer.epoch)
+      answerToConnectMs = connectedAfter ? Math.max(0, connectedAfter.epoch - autoAnswer.epoch) : null
+    }
     setMetrics({
       recapLatencyMs: firstAudio && matchEvent ? Math.max(0, firstAudio.epoch - matchEvent.epoch) : null,
       bargeHaltMs: halted ? (halted.meta.delta_ms ?? (detected ? halted.epoch - detected.epoch : null)) : null,
       freshnessChanged: Boolean(changed && !String(changed.meta.status || '').startsWith('UNAVAIL')),
       freshnessDetail: changed ? changed.detail : null,
       autoAnswered: Boolean(autoAnswer),
-      answerToConnectMs: autoAnswer && connected ? Math.max(0, connected.epoch - autoAnswer.epoch) : null,
+      autoPickupMode: autoAnswer?.meta?.mode || null, // 'network' | 'barge'
+      answerToConnectMs,
+      mockLines: log.filter((e) => e.name === 'caller.mock_line').length,
+      echoFiltered: log.filter((e) => e.name === 'caller.echo_filtered').length,
       intent: bargeResult ? bargeResult.action : null,
       bargePhrase: bargeResult ? bargeResult.phrase : null,
+      turns: call1Turns.length + call2Turns.length,
     })
-  }, [bargeResult, pushEvent, stopMic])
+  }, [bargeResult, call1Turns.length, call2Turns.length, pushEvent, stopMic, teardownRecapAudio])
 
   const fullReset = useCallback(async () => {
     clearAll()
@@ -729,7 +1282,6 @@ export function useSimulation() {
     loadCapabilities()
     return () => {
       aliveRef.current = false
-      stopCallerSpeech()
       stopRingback()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -755,16 +1307,23 @@ export function useSimulation() {
     bargeResult,
     chosenMode,
     memoryBusy,
-    activeSpeaker,
+    recordingSpeaker,
     metrics,
     error,
-    capsSuggestions: { call1: CALL1_USER_SUGGESTIONS, call2: CALL2_USER_SUGGESTIONS },
     retryCaps: loadCapabilities,
+    lang,
+    setLang,
+    chosenScenario,
+    selectScenario,
     startCall1,
-    suggestReply,
+    startTurn,
+    endTurn,
     simulateDrop,
     continueToCallback,
     chooseRecapMode,
+    resumeRecapPlayback: async () => {
+      if (resumeRef.current) await resumeRef.current()
+    },
     armBargeMic,
     replayRecap,
     testPhrase,
@@ -772,5 +1331,8 @@ export function useSimulation() {
     endCall,
     fullReset,
     stopMic,
+    pickupCountdownS,
+    mockLineSpoken,
+    mockError,
   }
 }

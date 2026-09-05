@@ -8,7 +8,8 @@ barge-in intent classification and the STT websocket policy).
 These tests never touch external services:
   - the Thread Memory Store is swapped for an in-memory SQLite store,
   - the FreshnessChecker is replaced with a deterministic stub,
-  - Rime endpoints are exercised only in mock mode (503 gate).
+  - Rime endpoints are exercised only when no RIME_API_KEY is configured
+    (503 gate — Rime is the only TTS provider, never silently substituted).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from fastapi.testclient import TestClient
 from dashboard import sim_engine
 from dashboard.server import app
 from modules.brain.store import ThreadMemoryStore
+from shared.config import settings
 from shared.schemas import (
     FactCheckResult,
     FreshnessResult,
@@ -117,7 +119,9 @@ def _seed_call_one() -> None:
 # ── Capabilities ───────────────────────────────────────────────────────────────
 
 
-def test_capabilities_shape() -> None:
+def test_capabilities_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without a RIME_API_KEY the dashboard reports Rime disabled (mock mode).
+    monkeypatch.setattr(settings, "rime_api_key", "YOUR_RIME_API_KEY_HERE")
     response = client.get("/api/capabilities")
     assert response.status_code == 200
     body = response.json()
@@ -131,7 +135,7 @@ def test_capabilities_shape() -> None:
         "time_scale_factor",
         "private_track_id",
     }
-    assert body["rime"]["enabled"] is False  # mock mode gates Rime
+    assert body["rime"]["enabled"] is False  # no key -> Rime gated
     assert body["stt"]["enabled"] is False
     assert "freshness" in body
     assert body["ready"] is False
@@ -140,13 +144,18 @@ def test_capabilities_shape() -> None:
 # ── Rime gating (Rule 2: no silent substitution) ──────────────────────────────
 
 
-def test_rime_tts_gated_in_mock_mode() -> None:
+def test_rime_tts_gated_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A placeholder / empty key must 503 with a clear message — never a silent
+    # swap to another TTS provider. Rime works in mock mode only when a real
+    # key is configured (Rime stays the only provider).
+    monkeypatch.setattr(settings, "rime_api_key", "YOUR_RIME_API_KEY_HERE")
     response = client.post("/api/rime/tts", json={"text": "Heads up — price is now $420."})
     assert response.status_code == 503
     assert "USE_MOCKS" in response.json()["detail"]
 
 
-def test_private_recap_audio_gated_in_mock_mode() -> None:
+def test_private_recap_audio_gated_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "rime_api_key", "YOUR_RIME_API_KEY_HERE")
     response = client.post("/api/private-recap-audio")
     assert response.status_code == 503
 
@@ -178,6 +187,39 @@ def test_sim_full_call_one_to_recap() -> None:
     assert payload["freshness"]["any_changed"] is True
     assert payload["metrics"]["freshness_ms"] >= 0
     assert "$420" in payload["text"] or "Heads up" in payload["text"]
+
+
+def test_sim_recap_hindi_language_frames() -> None:
+    """
+    The recap request accepts a language; fixed phrasing is localised to
+    Hindi while thread-memory content stays as recorded.
+    """
+    _seed_call_one()
+
+    recap = client.post(
+        "/api/sim/recap",
+        json={
+            "caller_id": CALLER_Z,
+            "session_id": SESS_TWO,
+            "ring_window_s": 25.0,
+            "language": "hi",
+        },
+    )
+    assert recap.status_code == 200
+    payload = recap.json()
+    assert payload["language"] == "hi"
+    # Hindi frames: freshness flag and next-action framing are localised.
+    assert any(
+        marker in payload["text"]
+        for marker in ("सुनिए", "पुष्टि नहीं", "अभी बाकी", "आपकी कार्रवाई", "पहली प्राथमिकता")
+    )
+    # English is still the default when no language is passed.
+    recap_en = client.post(
+        "/api/sim/recap",
+        json={"caller_id": CALLER_Z, "session_id": SESS_TWO, "ring_window_s": 25.0},
+    )
+    assert recap_en.status_code == 200
+    assert recap_en.json()["language"] == "en"
 
 
 def test_sim_call_ended_without_turns_is_409() -> None:
@@ -250,3 +292,18 @@ def test_stt_websocket_reports_mock_mode_error() -> None:
         message = ws.receive_json()
         assert message["type"] == "error"
         assert message["code"] == "stt_unavailable"
+
+
+def test_normalize_speaker_valid() -> None:
+    from dashboard.stt_bridge import normalize_speaker
+
+    assert normalize_speaker("USER") == "USER"
+    assert normalize_speaker("caller") == "CALLER"
+    assert normalize_speaker(None) == "USER"
+
+
+def test_normalize_speaker_rejects_unknown() -> None:
+    from dashboard.stt_bridge import normalize_speaker
+
+    with pytest.raises(ValueError):
+        normalize_speaker("ROBOT")

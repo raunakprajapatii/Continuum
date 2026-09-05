@@ -12,8 +12,9 @@ messages back to the browser as JSON::
     {type: "transcript", speaker: "USER", text: "...", is_final: false, confidence: 0.9}
     {type: "error", code: "...", message: "..."}
 
-Speaker is always USER — the single dashboard microphone is the Continuum
-user.  Caller (Z) turns are scripted demo content, not transcribed audio.
+The ``speaker`` query parameter (USER or CALLER) tags every transcript so the
+same browser microphone can record both sides of a live two-way conversation:
+User 1 records as USER, User 2 (Z in the demo) records as CALLER.
 
 Deepgram key is read from settings and is never logged.
 """
@@ -48,7 +49,7 @@ def stt_available() -> bool:
     return bool(settings.deepgram_api_key)
 
 
-def _upstream_uri() -> str:
+def _upstream_uri(language: Optional[str] = None) -> str:
     params = {
         "model": DEEPGRAM_MODEL,
         "encoding": "linear16",
@@ -58,13 +59,13 @@ def _upstream_uri() -> str:
         "endpointing": "250",
         "punctuate": "true",
         "smart_format": "true",
-        "language": settings.rime_default_language or "en",
+        "language": language or settings.rime_default_language or "en",
     }
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return f"{DEEPGRAM_WS}?{query}"
 
 
-async def connect_upstream() -> Any:
+async def connect_upstream(language: Optional[str] = None) -> Any:
     """
     Open the upstream Deepgram WebSocket.
 
@@ -73,7 +74,7 @@ async def connect_upstream() -> Any:
     """
     import websockets
 
-    uri = _upstream_uri()
+    uri = _upstream_uri(language)
     headers = {"Authorization": f"Token {settings.deepgram_api_key}"}
     try:
         conn = await websockets.connect(
@@ -114,14 +115,41 @@ def _dg_transcript(message: dict[str, Any]) -> Optional[dict[str, Any]]:
     }
 
 
+VALID_SPEAKERS = ("USER", "CALLER")
+
+
+def normalize_speaker(speaker: Optional[str]) -> str:
+    """
+    Validate + normalise the speaker label for a live mic session.
+
+    User 1 records as USER, User 2 (the remote party, Z in the demo) records
+    as CALLER — matching the Speaker enum used by the Brain extractor.
+
+    Raises ``ValueError`` for anything else.
+    """
+    value = (speaker or "USER").strip().upper()
+    if value not in VALID_SPEAKERS:
+        raise ValueError(f"speaker must be one of {VALID_SPEAKERS}, got {speaker!r}")
+    return value
+
+
 async def run_stt_relay(
     browser_ws: Any,
     session_id: str,
+    speaker: Optional[str] = "USER",
+    language: Optional[str] = None,
 ) -> None:
     """
     Relay audio between the browser WebSocket and Deepgram until either side
-    disconnects.  Sends ``ready`` first, then transcript events.
+    disconnects.  Sends ``ready`` first, then transcript events tagged with the
+    ``speaker`` who is recording (USER or CALLER).
+
+    ``language`` (BCP-47, e.g. "en" / "hi") is forwarded to Deepgram so a
+    Hindi conversation is transcribed in Hindi; defaults to
+    ``settings.rime_default_language``.
     """
+    speaker = normalize_speaker(speaker)
+
     if not stt_available():
         reason = (
             "Mock mode is active (USE_MOCKS=true). Live Deepgram STT is only "
@@ -135,7 +163,7 @@ async def run_stt_relay(
         return
 
     try:
-        upstream = await connect_upstream()
+        upstream = await connect_upstream(language=language)
     except Exception as exc:  # pragma: no cover - depends on live network
         logger.error("Deepgram upstream connect failed: %s", exc)
         await browser_ws.send_json(
@@ -152,7 +180,7 @@ async def run_stt_relay(
             {
                 "type": "ready",
                 "session_id": session_id,
-                "speaker": "USER",
+                "speaker": speaker,
                 "provider": "deepgram",
                 "model": DEEPGRAM_MODEL,
                 "ts": datetime.now(tz=timezone.utc).isoformat(),
@@ -177,7 +205,7 @@ async def run_stt_relay(
             await browser_ws.send_json(
                 {
                     "type": "transcript",
-                    "speaker": "USER",
+                    "speaker": speaker,
                     "text": item["text"],
                     "is_final": item["is_final"],
                     "confidence": item["confidence"],

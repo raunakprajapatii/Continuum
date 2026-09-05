@@ -2,13 +2,17 @@
 //
 // Captures mono audio, resamples it to 16 kHz PCM16 and streams the bytes to
 // the dashboard's /api/stt/stream socket. Transcript messages come back as
-// JSON { type: "transcript", speaker: "USER", text, is_final }.
+// JSON { type: "transcript", speaker, text, is_final } where speaker is the
+// person recording this segment (USER for User 1, CALLER for User 2).
 
 const TARGET_RATE = 16000
 
-function buildWebSocketUrl(sessionId) {
+function buildWebSocketUrl(sessionId, speaker, language) {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${window.location.host}/api/stt/stream?session_id=${encodeURIComponent(sessionId)}`
+  const params = [`session_id=${encodeURIComponent(sessionId)}`]
+  if (speaker) params.push(`speaker=${encodeURIComponent(speaker)}`)
+  if (language) params.push(`language=${encodeURIComponent(language)}`)
+  return `${proto}//${window.location.host}/api/stt/stream?${params.join('&')}`
 }
 
 export function micStreamSupported() {
@@ -18,11 +22,12 @@ export function micStreamSupported() {
 /**
  * Start capturing the user's microphone and streaming it to Deepgram.
  *
- * @param {{ sessionId: string, onTranscript: (m: {text,isFinal,confidence}) => void,
+ * @param {{ sessionId: string, speaker?: 'USER'|'CALLER', language?: string,
+ *           onTranscript: (m: {text,isFinal,confidence}) => void,
  *           onError: (e: {code,message}) => void, onReady: () => void }} opts
  * @returns {Promise<{ stop: () => void }>}
  */
-export async function startMicStream({ sessionId, onTranscript, onError, onReady }) {
+export async function startMicStream({ sessionId, speaker = 'USER', language, onTranscript, onError, onReady }) {
   if (!micStreamSupported()) {
     throw new Error('Microphone capture is not supported in this browser')
   }
@@ -40,7 +45,7 @@ export async function startMicStream({ sessionId, onTranscript, onError, onReady
   const audioContext = new Ctx()
   const source = audioContext.createMediaStreamSource(stream)
 
-  const ws = new WebSocket(buildWebSocketUrl(sessionId))
+  const ws = new WebSocket(buildWebSocketUrl(sessionId, speaker, language))
   let canSend = false
   let closed = false
 

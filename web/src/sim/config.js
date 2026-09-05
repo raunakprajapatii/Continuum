@@ -1,5 +1,6 @@
 // Scenario + copy constants for the interactive Continuum demo simulation.
-// The caller (Z) is a scripted demo avatar; "You" speaks live through the mic.
+// Both sides of the conversation are recorded LIVE through the browser mic
+// (Deepgram STT) — there is no scripted caller and no mock voice.
 
 export const CALLER = {
   name: 'Z',
@@ -8,60 +9,56 @@ export const CALLER = {
 }
 
 export const SESSIONS = {
-  call1: 'sim-demo-call-1', // yesterday's interrupted call
-  call2: 'sim-demo-call-2', // today's reconnect
+  call1: 'sim-demo-call-1', // first live conversation (interrupted)
+  call2: 'sim-demo-call-2', // the reconnect conversation
 }
 
 export const PRIVATE_TRACK_ID = 'continuum-private-whisper'
 
-// ── Call one (yesterday) — Z's scripted lines ───────────────────────────────
-// The last line is intentionally cut short: that is the forced network drop.
-export const CALL1_Z_LINES = [
-  {
-    text: 'Hey, it\'s Z — sorry to call back so soon. I wanted to follow up on the Q3 numbers before we talk to the vendor.',
-    hint: 'Say hello, then confirm the unit price you quoted.',
-  },
-  {
-    text: 'Great. So just to lock it in — the unit price we discussed was around four hundred dollars, right?',
-    hint: 'Reply something like: "Right — four hundred dollars per unit, that\'s the number we quoted."',
-  },
-  {
-    text: 'Perfect. And can you check with finance on volume discounts before we sign?',
-    hint: 'Reply: "Absolutely, I\'ll check with finance today and get back to you."',
-  },
-  {
-    text: 'Awesome. And one more thing — the ticket number is XYZ-4821, I just wanted to make sure you got it befo',
-    cut: true, // connection drops mid-sentence here
-    hint: '…and the line drops mid-sentence. No goodbye — that is the interruption.',
-  },
-]
+// Who records through the shared browser mic. USER = User 1 (you), CALLER =
+// User 2 (Z in the demo narrative). The labels map 1:1 onto the backend
+// Speaker enum used by the Brain extractor.
+export const SPEAKERS = {
+  USER: { label: 'User 1', short: 'U1' },
+  CALLER: { label: 'User 2', short: 'U2' },
+}
 
-// Suggested "You" replies shown as chips (also the deterministic fallback when
-// the live mic / STT is unavailable). They double as memory-extraction anchors.
-export const CALL1_USER_SUGGESTIONS = [
-  'Hey Z — happy to. What do you need?',
-  'Right — four hundred dollars per unit, that\'s the number we quoted.',
-  'Absolutely, I\'ll check with finance today and get back to you.',
-]
+// ── Network auto-pickup (India ring behaviour) ───────────────────────────────
+// In India the phone rings ~30 s before the network connects the call by
+// itself. If the recap whisper is still playing at that point it keeps playing;
+// a scripted (mock) caller then joins at reduced volume so the recap stays
+// intelligible. This is the test fixture for that overlap.
+export const AUTO_PICKUP = {
+  // Seconds of ringing before the network auto-connects the call.
+  ringDelayS: 30,
+}
 
-// ── Call two (today, after the recap / barge-in) ─────────────────────────────
-export const CALL2_Z_LINES = [
-  {
-    text: 'Hey — sorry, we got cut off yesterday. Did you get a chance to check with finance?',
-    hint: 'Answer naturally — you already know exactly where you left off.',
-  },
-  {
-    text: 'Perfect, that\'s everything I needed. Talk soon!',
-    hint: 'Wrap up the call when you\'re ready.',
-  },
-]
+// Scripted caller ("mock Z") lines for the auto-pickup option. The text is
+// authored (not transcribed), so it is recorded straight to thread memory as
+// CALLER turns — it never has to be "taken as input" from the mic. gapMs is
+// silence after each line so the presenter can reply.
+export const MOCK_CALLER = {
+  speaker: 'masonry', // distinct male Rime voice — the recap whisper stays 'eyre'
+  model: null, // inherit the backend default (coda)
+  timeScaleFactor: 1.0, // natural pace, not the sped-up recap cadence
+  duckedVolume: 0.3, // while the recap whisper is still playing
+  fullVolume: 0.85, // once live (recap finished / interrupted)
+  lines: [
+    { text: 'Hey — hello? Can you hear me? The network finally connected us.', gapMs: 2600 },
+    { text: 'So, did you get a chance to check with finance on the volume discount?', gapMs: 3200 },
+    { text: 'And are we still good on the Q3 numbers?', gapMs: 2800 },
+    { text: 'Alright, that works for me. Thanks for sorting it out.', gapMs: 0 },
+  ],
+  // Hindi script used when the dashboard language is Hindi (India demo).
+  linesHi: [
+    { text: 'हे — हैलो? क्या आप मुझे सुन पा रहे हैं? नेटवर्क ने आखिरकार कॉल कनेक्ट कर दी।', gapMs: 2600 },
+    { text: 'तो, क्या आपको फाइनेंस से वॉल्यूम डिस्काउंट के बारे में पूछने का मौका मिला?', gapMs: 3200 },
+    { text: 'और क्या हम Q3 के आँकड़ों पर अभी भी सहमत हैं?', gapMs: 2800 },
+    { text: 'ठीक है, मेरे लिए यह काम कर गया। इसे सुलझाने के लिए धन्यवाद।', gapMs: 0 },
+  ],
+}
 
-export const CALL2_USER_SUGGESTIONS = [
-  'Yeah — finance confirmed we can do the volume discount. I\'ll send the numbers over.',
-  'Great, talk soon!',
-]
-
-// ── Barge-in phrases (demo-script §03) ───────────────────────────────────────
+// ── Barge-in phrases (demo script §03) ───────────────────────────────────────
 export const BARGE_ACTION_PHRASE = 'I know, just pick up the call'
 export const BARGE_STOP_PHRASES = ['Hold on, one second', 'Skip — I remember']
 
@@ -93,4 +90,7 @@ export const EVENT_KINDS = {
   'call.auto_answer_triggered': 'call',
   'call.connected': 'call',
   'call.completed': 'call',
+  'turn.recorded': 'memory',
+  'caller.mock_line': 'voice',
+  'caller.echo_filtered': 'action',
 }

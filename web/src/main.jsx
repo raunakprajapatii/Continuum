@@ -7,7 +7,8 @@ import {
 } from 'lucide-react'
 import './styles.css'
 import './sim-console.css'
-import { CALLER, INTENT_LABELS } from './sim/config.js'
+import { format, LANGUAGES, t } from './i18n.js'
+import { CALLER, INTENT_LABELS, SPEAKERS } from './sim/config.js'
 import { PHASE, RECAP_STATE, useSimulation } from './sim/useSimulation.js'
 
 const KIND_ICONS = {
@@ -20,11 +21,11 @@ const KIND_ICONS = {
 }
 
 const STAGES = [
-  { key: PHASE.CALL1, n: '01', label: 'Call with Z', short: 'Yesterday' },
-  { key: PHASE.MEMORY, n: '02', label: 'Interrupted', short: 'Memory saved' },
-  { key: PHASE.RECAP, n: '03', label: 'Callback ring', short: 'Next morning' },
-  { key: PHASE.CONNECTED, n: '04', label: 'Recap / barge-in', short: 'Caught up' },
-  { key: PHASE.COMPLETED, n: '05', label: 'Connected', short: 'Evidence' },
+  { key: PHASE.CALL1, n: '01', labelKey: 'stage.call1.t', shortKey: 'stage.call1.s' },
+  { key: PHASE.MEMORY, n: '02', labelKey: 'stage.memory.t', shortKey: 'stage.memory.s' },
+  { key: PHASE.RECAP, n: '03', labelKey: 'stage.recap.t', shortKey: 'stage.recap.s' },
+  { key: PHASE.CONNECTED, n: '04', labelKey: 'stage.connected.t', shortKey: 'stage.connected.s' },
+  { key: PHASE.COMPLETED, n: '05', labelKey: 'stage.completed.t', shortKey: 'stage.completed.s' },
 ]
 
 function stageIndexFor(phase) {
@@ -45,8 +46,8 @@ function SimApp() {
       )}
       <footer>
         <a className="brand" href="#top"><span className="brand-mark"><Waves size={18} /></span>CONTINUUM</a>
-        <span>Voice-native continuity for the moments that matter.</span>
-        <span>Made for Rime Hackathon · 2026</span>
+        <span>{t('footer.tag', sim.lang)}</span>
+        <span>{t('footer.made', sim.lang)}</span>
       </footer>
     </main>
   )
@@ -54,7 +55,8 @@ function SimApp() {
 
 // ── Top bar (always visible — demo script §02A) ──────────────────────────────
 function TopBar({ sim }) {
-  const { caps, phase, callStateLabel } = sim
+  const { caps, phase, callStateLabel, lang, setLang } = sim
+  const T = (k, v) => format(t(k, lang), v)
   const rime = caps?.rime
   // Once the recap is generated, surface the voice/model actually speaking.
   const activeModel = sim.recap?.model || rime?.model || '…'
@@ -64,13 +66,25 @@ function TopBar({ sim }) {
   return (
     <nav className="topbar sim-topbar" id="top">
       <a className="brand" href="#top" aria-label="Continuum home"><span className="brand-mark"><Waves size={18} /></span>CONTINUUM</a>
-      <div className="thread-chip"><span className="avatar small">Z</span><span>Thread: Z · Contact</span><span className="online-dot" /></div>
+      <div className="thread-chip"><span className="avatar small">Z</span><span>{T('topbar.thread')}</span><span className="online-dot" /></div>
       <div className="provider" title="Provider transparency — recap whisper is Rime only">
-        <span>Powered by</span><b>Rime</b><i />
-        <span>model: <b>{activeModel}</b></span><i />
-        <span>voice: <b>{activeSpeaker}</b></span><i />
-        <span>track: <b>{rime ? 'private' : '…'}</b></span>
-        {caps?.stt?.enabled && <><i /><span>STT: <b>Deepgram</b></span></>}
+        <span>{T('topbar.powered_by')}</span><b>Rime</b><i />
+        <span>{T('topbar.model')}: <b>{activeModel}</b></span><i />
+        <span>{T('topbar.voice')}: <b>{activeSpeaker}</b></span><i />
+        <span>{T('topbar.track')}: <b>{rime ? 'private' : '…'}</b></span>
+        {caps?.stt?.enabled && <><i /><span>{T('topbar.stt')}: <b>Deepgram</b></span></>}
+      </div>
+      <div className="lang-toggle" role="group" aria-label="Language">
+        {LANGUAGES.map((l) => (
+          <button
+            key={l.code}
+            className={lang === l.code ? 'active' : ''}
+            onClick={() => setLang(l.code)}
+            title={l.label}
+          >
+            {l.short}
+          </button>
+        ))}
       </div>
       <div className={`state-pill${connectedColor}`}>
         <span className="pulse" />{callStateLabel}
@@ -81,64 +95,89 @@ function TopBar({ sim }) {
 
 // ── Launch / pre-flight screen ───────────────────────────────────────────────
 function LaunchScreen({ sim }) {
-  const { capsState, caps, capsError, retryCaps, startCall1, micError, error } = sim
+  const { capsState, caps, capsError, retryCaps, startCall1, micError, error, chosenScenario, selectScenario, lang } = sim
+  const T = (k, v) => format(t(k, lang), v)
+  const scenarios = [
+    { key: 'full', icon: <Ear size={18} />, titleKey: 'scenario.full.t', descKey: 'scenario.full.d', ctaKey: 'scenario.full.cta' },
+    { key: 'barge', icon: <Mic size={18} />, titleKey: 'scenario.barge.t', descKey: 'scenario.barge.d', ctaKey: 'scenario.barge.cta', hot: true },
+    { key: 'autoPickup', icon: <AudioLines size={18} />, titleKey: 'scenario.pickup.t', descKey: 'scenario.pickup.d', ctaKey: 'scenario.pickup.cta' },
+  ]
   return (
     <section className="launch-wrap">
       <div className="launch-copy">
-        <div className="eyebrow"><Sparkles size={14} /> Conversation continuity, before hello</div>
-        <h1>Hear the recap.<br /><em>Then pick up.</em></h1>
-        <p>
-          Continuum whispers yesterday&apos;s conversation into your ear while the phone is still ringing —
-          and if you&apos;ve heard enough, you can just say <em>&ldquo;I know, just pick up the call.&rdquo;</em>
-        </p>
+        <div className="eyebrow"><Sparkles size={14} /> {T('launch.eyebrow')}</div>
+        <h1>{T('launch.title_a')}<br /><em>{T('launch.title_b')}</em></h1>
+        <p>{T('launch.lead')}</p>
         <div className="launch-flow">
-          {[['01', 'Live call with Z', 'you speak, Z replies'], ['02', 'Line drops', 'thread memory saved'], ['03', 'Z calls back', 'Rime recap on your private track'], ['04', 'Barge-in or listen', 'say the phrase → auto-answer']].map(([n, t, s]) => (
-            <div className="launch-step" key={n}><span>{n}</span><div><b>{t}</b><small>{s}</small></div></div>
+          {[['01', 'launch.step1.t', 'launch.step1.s'], ['02', 'launch.step2.t', 'launch.step2.s'], ['03', 'launch.step3.t', 'launch.step3.s'], ['04', 'launch.step4.t', 'launch.step4.s']].map(([n, tk, sk]) => (
+            <div className="launch-step" key={n}><span>{n}</span><div><b>{T(tk)}</b><small>{T(sk)}</small></div></div>
           ))}
         </div>
+
+        <div className="scenario-picker">
+          <div className="scenario-head">
+            <div><span className="kicker">{T('launch.scenario.kicker')}</span><h2>{T('launch.scenario.title')}</h2></div>
+          </div>
+          <div className="scenario-grid">
+            {scenarios.map((s, i) => (
+              <button
+                key={s.key}
+                className={`scenario-card ${chosenScenario === s.key ? 'selected' : ''} ${s.hot ? 'hot' : ''}`}
+                onClick={() => selectScenario(s.key)}
+              >
+                <span className="scenario-num">{i + 1}</span>
+                <span className="scenario-icon">{s.icon}</span>
+                <div><b>{T(s.titleKey)}</b><p>{T(s.descKey)}</p><em>{T(s.ctaKey)} <ChevronRight size={13} /></em></div>
+              </button>
+            ))}
+          </div>
+          <p className="scenario-hint">{T('launch.scenario.hint')}</p>
+        </div>
+
         <div className="launch-actions">
-          <button className="primary-button" onClick={startCall1} disabled={capsState === 'loading'}>
+          <button
+            className="primary-button"
+            onClick={startCall1}
+            disabled={capsState === 'loading' || !chosenScenario}
+            title={!chosenScenario ? T('scenario.none') : undefined}
+          >
             {capsState === 'loading' ? <Loader2 className="spin" size={16} /> : <Phone size={16} />}
-            Start the simulation
+            {T('launch.start')}
           </button>
+          {!chosenScenario && <span className="scenario-missing"><AlertTriangle size={13} /> {T('scenario.none')}</span>}
           {capsState === 'error' && (
-            <button className="text-button" onClick={retryCaps}>Retry backend check <RotateCcw size={14} /></button>
+            <button className="text-button" onClick={retryCaps}>{T('launch.retry')} <RotateCcw size={14} /></button>
           )}
         </div>
-        {capsState === 'error' && <div className="caps-error"><AlertTriangle size={15} /> {capsError} — start the dashboard server, then retry.</div>}
+        {capsState === 'error' && <div className="caps-error"><AlertTriangle size={15} /> {capsError} {T('launch.caps_error')}</div>}
       </div>
 
       <div className="readiness-card">
-        <div className="card-title"><div><span className="kicker">Pre-flight</span><h3>Live providers</h3></div><span className={`live-label ${caps?.ready ? 'ok' : ''}`}><span className="pulse" /> {caps?.ready ? 'READY' : 'CHECK'}</span></div>
+        <div className="card-title"><div><span className="kicker">{T('launch.preflight')}</span><h3>{T('launch.providers')}</h3></div><span className={`live-label ${caps?.ready ? 'ok' : ''}`}><span className="pulse" /> {caps?.ready ? T('launch.ready') : T('launch.check')}</span></div>
         <ReadinessRow
           icon={<Volume2 size={16} />}
-          title="Rime recap whisper"
+          title={T('launch.rime_row')}
           ok={Boolean(caps?.rime?.enabled)}
           detail={
             caps?.rime?.enabled
               ? `${caps.rime.model} · ${caps.rime.speaker} · private track`
-              : 'Requires USE_MOCKS=false + RIME_API_KEY (recap stays Rime — never substituted)'
+              : T('launch.rime_off')
           }
         />
         <ReadinessRow
           icon={<Mic size={16} />}
-          title="Deepgram live STT"
+          title={T('launch.stt_row')}
           ok={Boolean(caps?.stt?.enabled)}
-          detail={caps?.stt?.enabled ? 'Your replies are transcribed live' : 'Set USE_MOCKS=false + DEEPGRAM_API_KEY. Typed replies still work.'}
+          detail={caps?.stt?.enabled ? T('launch.stt_ok') : T('launch.stt_off')}
         />
         <ReadinessRow
-          icon={<Activity size={16} />}
-          title="Freshness API"
-          ok={Boolean(caps?.freshness?.enabled)}
-          detail={
-            caps?.freshness?.enabled
-              ? `price_usd live = ${caps.freshness.price_usd} (triggers the $400 → $420 catch)`
-              : `Start python -m mocks.mock_freshness (port 8001) for the staleness flag`
-          }
+          icon={<Sparkles size={16} />}
+          title={T('launch.llm_row')}
+          ok={Boolean(caps?.llm?.enabled)}
+          detail={caps?.llm?.enabled ? T('launch.llm_ok') : T('launch.llm_off')}
         />
         <div className="readiness-foot">
-          <ShieldCheck size={15} /> Recap audio is architecturally separate from the caller track. Z&apos;s voice is a
-          clearly-labelled simulated caller; the recap is Rime only.
+          <ShieldCheck size={15} /> {T('launch.foot')}
         </div>
         {(micError || error) && <div className="inline-note warn"><AlertTriangle size={14} />{micError || error}</div>}
       </div>
@@ -159,13 +198,14 @@ function ReadinessRow({ icon, title, ok, detail }) {
 // ── Running console ──────────────────────────────────────────────────────────
 function Console({ sim }) {
   const current = stageIndexFor(sim.phase)
+  const T = (k) => t(k, sim.lang)
   return (
     <section className="console-wrap">
       <div className="stage-rail">
         {STAGES.map((stage, i) => (
           <div key={stage.key} className={`stage-item ${i === current ? 'active' : ''} ${i < current ? 'done' : ''}`}>
             {i < current ? <Check size={13} /> : <span>{stage.n}</span>}
-            <b>{stage.label}</b><small>{stage.short}</small>
+            <b>{T(stage.labelKey)}</b><small>{T(stage.shortKey)}</small>
           </div>
         ))}
       </div>
@@ -181,28 +221,40 @@ function Console({ sim }) {
 
 // ── Left column: dual-track visualizer + thread memory ───────────────────────
 function TracksAndMemory({ sim }) {
-  const { phase, recapState, audioStatus, threadSummary, recap, activeSpeaker } = sim
+  const { phase, recapState, audioStatus, threadSummary, recap, recordingSpeaker, callStateLabel, chosenMode, lang } = sim
+  const T = (k, v) => format(t(k, lang), v)
   const callerLive = phase === PHASE.CALL1 || phase === PHASE.CONNECTED
   const ringing = phase === PHASE.RECAP
   const whisperPlaying = phase === PHASE.RECAP && recapState === RECAP_STATE.PLAYING
+  const mockRun = chosenMode === 'autoPickup'
+  const autoConnected = mockRun && callStateLabel === 'CONNECTED'
 
   const callerStatus = callerLive
-    ? 'Live call with Z'
+    ? mockRun
+      ? T('tracks.caller_live_mock')
+      : recordingSpeaker === 'CALLER'
+        ? T('tracks.caller_live_rec')
+        : T('tracks.caller_live')
     : ringing
-      ? 'Ringback tone only — what Z hears'
+      ? autoConnected
+        ? T('tracks.caller_connected')
+        : T('tracks.caller_ring')
       : phase === PHASE.MEMORY
-        ? 'Call dropped — interrupted'
-        : 'Standby'
+        ? T('tracks.caller_dropped')
+        : T('tracks.caller_standby')
 
-  let whisperStatus = 'Standing by'
+  let whisperStatus = T('tracks.whisper_standby')
   if (phase === PHASE.RECAP) {
     whisperStatus = {
-      [RECAP_STATE.READY]: 'Recap ready on your private track',
-      [RECAP_STATE.LOADING]: 'Connecting to Rime…',
-      [RECAP_STATE.PLAYING]: 'Rime recap playing — your earpiece only',
-      [RECAP_STATE.HALTED]: 'Playback halted (barge-in)',
-      [RECAP_STATE.DONE]: 'Recap complete — you are caught up',
-      [RECAP_STATE.ERROR]: 'Rime unavailable — no fallback audio',
+      [RECAP_STATE.READY]: T('tracks.whisper_ready'),
+      [RECAP_STATE.LOADING]: T('tracks.whisper_loading'),
+      [RECAP_STATE.PLAYING]: autoConnected
+        ? T('tracks.whisper_playing_connected')
+        : T('tracks.whisper_playing'),
+      [RECAP_STATE.HALTED]: T('tracks.whisper_halted'),
+      [RECAP_STATE.DONE]: T('tracks.whisper_done'),
+      [RECAP_STATE.ERROR]: T('tracks.whisper_error'),
+      [RECAP_STATE.NEEDS_GESTURE]: T('tracks.whisper_blocked'),
     }[recapState]
   }
 
@@ -210,28 +262,28 @@ function TracksAndMemory({ sim }) {
     <div className="col-stack">
       <section className="card tracks-card">
         <div className="card-title">
-          <div><span className="kicker">Audio isolation</span><h3>Two tracks. Zero leakage.</h3></div>
-          <span className="verified"><Check size={13} /> fenced</span>
+          <div><span className="kicker">{T('tracks.kicker')}</span><h3>{T('tracks.title')}</h3></div>
+          <span className="verified"><Check size={13} /> {T('tracks.fenced')}</span>
         </div>
         <TrackRow
-          label="Caller-facing track"
-          sublabel="What Z hears"
+          label={T('tracks.caller_label')}
+          sublabel={T('tracks.caller_sub')}
           tone="caller"
-          active={callerLive || Boolean(activeSpeaker)}
+          active={callerLive || Boolean(recordingSpeaker)}
           status={callerStatus}
-          badge="SIMULATED CALLER · BROWSER VOICE"
+          badge={T('tracks.caller_badge')}
         />
         <div className="track-divider" />
         <TrackRow
-          label="Private whisper track"
-          sublabel="What only you hear"
+          label={T('tracks.whisper_label')}
+          sublabel={T('tracks.whisper_sub')}
           tone="whisper"
           active={whisperPlaying || audioStatus === 'loading'}
           status={whisperStatus}
-          badge="RIME"
+          badge={T('tracks.whisper_badge')}
           statusTone={recapState === RECAP_STATE.HALTED || recapState === RECAP_STATE.ERROR ? 'dim' : ''}
         />
-        <div className="separation-note"><ShieldCheck size={16} /><span>Rime recap audio routes exclusively to <code>continuum-private-whisper</code> — never the caller track.</span></div>
+        <div className="separation-note"><ShieldCheck size={16} /><span>{T('tracks.note')}</span></div>
       </section>
 
       <MemoryCard sim={sim} threadSummary={threadSummary} recap={recap} />
@@ -258,18 +310,20 @@ function TrackRow({ label, sublabel, tone, active, status, badge, statusTone = '
   )
 }
 
-function MemoryCard({ threadSummary, recap }) {
+function MemoryCard({ sim, threadSummary, recap }) {
+  const T = (k, v) => format(t(k, sim.lang), v)
   const freshness = recap?.freshness
   const changed = freshness?.results?.find((f) => f.status === 'CHANGED')
+  const unavailable = freshness?.results?.some((f) => f.status === 'UNAVAILABLE')
   return (
     <section className="card memory-card">
       <div className="card-title">
-        <div><span className="kicker">Thread memory</span><h3>What happened yesterday</h3></div>
+        <div><span className="kicker">{T('memory.kicker')}</span><h3>{T('memory.title')}</h3></div>
         <span className="avatar small">{CALLER.name}</span>
       </div>
       {threadSummary ? (
         <>
-          <p className="memory-copy">{threadSummary.headline || 'Call was interrupted — memory captured.'}</p>
+          <p className="memory-copy">{threadSummary.headline || T('memory.captured')}</p>
           {threadSummary.time_sensitive_facts?.length > 0 && (
             <div className="fact-rows">
               {threadSummary.time_sensitive_facts.map((f) => (
@@ -280,17 +334,19 @@ function MemoryCard({ threadSummary, recap }) {
           <div className={`freshness ${changed ? '' : 'muted'}`}>
             <span className="freshness-icon"><Zap size={15} /></span>
             <div>
-              <small>Freshness check</small>
+              <small>{T('memory.freshness_check')}</small>
               {changed ? (
-                <strong>{changed.label}: <s>{changed.cached_value}</s> → now {changed.live_value}</strong>
+                <strong>{T('memory.freshness_changed', { label: changed.label, cached: changed.cached_value, live: changed.live_value })}</strong>
+              ) : unavailable ? (
+                <strong>{T('memory.freshness_unavailable')}</strong>
               ) : (
-                <strong>Re-verifying before speaking…</strong>
+                <strong>{T('memory.freshness_verifying')}</strong>
               )}
             </div>
           </div>
         </>
       ) : (
-        <div className="memory-empty"><CircleDot size={18} /><span>No thread yet — the call with Z will be stored here after the drop.</span></div>
+        <div className="memory-empty"><CircleDot size={18} /><span>{T('memory.empty')}</span></div>
       )}
     </section>
   )
@@ -318,68 +374,100 @@ function StageHeader({ kicker, title, note }) {
   )
 }
 
-function TranscriptList({ turns, listening, interimText, label }) {
+function TranscriptList({ turns, listening, interimText, lang }) {
+  const T = (k) => t(k, lang)
   return (
     <div className="transcript-box">
       {turns.map((turn) => (
         <div key={turn.id} className={`turn ${turn.speaker === 'USER' ? 'user' : 'caller'} ${turn.live ? 'live' : ''}`}>
-          <span className="turn-avatar">{turn.speaker === 'USER' ? 'You' : 'Z'}</span>
-          <div><p>{turn.text}</p>{turn.live && <em className="turn-live">speaking…</em>}</div>
+          <span className="turn-avatar">{SPEAKERS[turn.speaker]?.label || turn.speaker}</span>
+          <div><p>{turn.text}</p>{turn.live && <em className="turn-live">speaking…</em>}{turn.mock && <em className="mock-tag">{lang === 'hi' ? 'स्क्रिप्टेड' : 'scripted'}</em>}</div>
         </div>
       ))}
       {turns.length === 0 && (
-        <div className="transcript-empty"><Radio size={18} /><span>Waiting for the call to start…</span></div>
+        <div className="transcript-empty"><Radio size={18} /><span>{T('transcript.empty')}</span></div>
       )}
     </div>
   )
 }
 
+// Turn recorder: pick who speaks, record live, stop to store the turn.
+function TurnRecorder({ sim, sessionId }) {
+  const { recordingSpeaker, interimText, micError, listening, lang } = sim
+  const T = (k, v) => format(t(k, lang), v)
+  const speakers = [['USER', SPEAKERS.USER.label], ['CALLER', SPEAKERS.CALLER.label]]
+  if (recordingSpeaker) {
+    return (
+      <div className="recorder-panel">
+        <div className="recording-banner">
+          <span className="rec-dot" />
+          <Mic size={14} />
+          <b>{T('recorder.recording', { label: SPEAKERS[recordingSpeaker]?.label || recordingSpeaker })}</b>
+          {interimText && <em className="interim">“{interimText}”</em>}
+        </div>
+        <button className="primary-button stop-record" onClick={sim.endTurn}>
+          <Square size={15} /> {T('recorder.stop_save')}
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div className="recorder-panel">
+      <div className="recorder-grid">
+        {speakers.map(([key, label]) => (
+          <button
+            key={key}
+            className={`record-btn ${listening ? 'disabled' : ''}`}
+            onClick={() => sim.startTurn(key, sessionId)}
+            disabled={Boolean(listening)}
+          >
+            <Mic size={15} /> {T('recorder.title', { label })}
+          </button>
+        ))}
+      </div>
+      {micError && <span className="mic-note warn"><VolumeX size={12} /> {micError}</span>}
+      <p className="stage-hint">{T('recorder.hint')}</p>
+    </div>
+  )
+}
+
 function MicChip({ sim }) {
-  const { listening, interimText, micError, stopMic, armBargeMic, phase } = sim
+  const { listening, interimText, micError, stopMic, armBargeMic, phase, chosenMode, lang } = sim
+  const T = (k) => t(k, lang)
+  const mockRun = chosenMode === 'autoPickup'
   if (!listening) {
     return (
       <div className="mic-chip-wrap">
         {micError && <span className="mic-note warn"><VolumeX size={12} /> {micError}</span>}
-        {phase === PHASE.RECAP && sim.caps?.stt?.enabled && (
-          <button className="mic-toggle" onClick={() => armBargeMic()}><MicOff size={14} /> Enable mic interrupt</button>
+        {(phase === PHASE.RECAP || mockRun) && sim.caps?.stt?.enabled && (
+          <button className="mic-toggle" onClick={() => armBargeMic()}>
+            <MicOff size={14} /> {mockRun ? T('mic.enable_auto') : T('mic.enable_interrupt')}
+          </button>
         )}
       </div>
     )
   }
   return (
     <div className="mic-chip on">
-      <span className="mic-dot" /><Mic size={13} /> Listening for your voice
+      <span className="mic-dot" /><Mic size={13} /> {T('mic.listening')}
       {interimText && <em className="interim">“{interimText}”</em>}
-      <button className="mic-stop" onClick={stopMic} aria-label="Stop listening"><MicOff size={13} /></button>
-    </div>
-  )
-}
-
-function SuggestionChips({ sim, listKey }) {
-  const suggestions = sim.capsSuggestions[listKey]
-  return (
-    <div className="suggestion-row">
-      {suggestions.map((text) => (
-        <button key={text} className="suggestion-chip" onClick={() => sim.suggestReply(text, listKey)}>
-          <Mic size={12} /> {text}
-        </button>
-      ))}
+      <button className="mic-stop" onClick={stopMic} aria-label={T('mic.stop')}><MicOff size={13} /></button>
     </div>
   )
 }
 
 function CallOneStage({ sim }) {
+  const T = (k) => t(k, sim.lang)
   return (
     <>
-      <StageHeader kicker="Yesterday · live call" title="Call with Z — you are on the line" note="your replies are transcribed live" />
-      <TranscriptList turns={sim.call1Turns} listening={sim.listening} interimText={sim.interimText} />
-      <MicChip sim={sim} />
+      <StageHeader kicker={T('call1.kicker')} title={T('call1.title')} note={T('call1.note')} />
+      <TranscriptList turns={sim.call1Turns} listening={sim.listening} interimText={sim.interimText} lang={sim.lang} />
+      <TurnRecorder sim={sim} sessionId="sim-demo-call-1" />
       <div className="stage-foot">
-        <p className="stage-hint">Z is scripted for the demo. Reply aloud when Z pauses — or click a suggested line.</p>
-        <SuggestionChips sim={sim} listKey="call1" />
+        <p className="stage-hint">{T('call1.hint')}</p>
         <div className="stage-actions">
-          <button className="danger-button" onClick={sim.simulateDrop}><PhoneOff size={15} /> Simulate network drop</button>
-          <span className="stage-aside">The line drops mid-sentence — no goodbye, just like a tunnel.</span>
+          <button className="danger-button" onClick={sim.simulateDrop}><PhoneOff size={15} /> {T('call1.drop')}</button>
+          <span className="stage-aside">{T('call1.drop_aside')}</span>
         </div>
       </div>
     </>
@@ -387,60 +475,71 @@ function CallOneStage({ sim }) {
 }
 
 function MemoryStage({ sim }) {
+  const T = (k) => t(k, sim.lang)
   return (
     <>
-      <StageHeader kicker="Interruption & recovery" title="Thread saved — Z will call back" note="yesterday 2:02 PM" />
+      <StageHeader kicker={T('memory.kicker2')} title={T('memory.title2')} note={T('memory.note')} />
       <div className="memory-banner">
-        <div><AlertTriangle size={16} /><p>The call ended abruptly while Z was mid-sentence. The Thread Memory Store kept the last state — facts, commitments and open items.</p></div>
-        {sim.memoryBusy && <div className="inline-note"><Loader2 className="spin" size={14} /> Extracting structured memory…</div>}
+        <div><AlertTriangle size={16} /><p>{T('memory.banner')}</p></div>
+        {sim.memoryBusy && <div className="inline-note"><Loader2 className="spin" size={14} /> {T('memory.busy')}</div>}
       </div>
       <div className="morning-card">
-        <Clock3 size={16} /><div><b>Next morning · 9:14 AM</b><small>Z&apos;s number rings in. The ring window is where Continuum catches you up.</small></div>
-        <button className="primary-button compact" onClick={sim.continueToCallback}><PhoneCall size={15} /> Continue →</button>
+        <Clock3 size={16} /><div><b>{T('memory.morning')}</b><small>{T('memory.morning_sub')}</small></div>
+        <button className="primary-button compact" onClick={sim.continueToCallback}><PhoneCall size={15} /> {T('memory.continue')}</button>
       </div>
     </>
   )
 }
 
 function RecapStage({ sim }) {
-  const { recapState, recap, chosenMode } = sim
+  const { recapState, recap, chosenMode, chosenScenario, lang } = sim
+  const T = (k, v) => format(t(k, lang), v)
   const showChoices = recapState === RECAP_STATE.READY
+  const preset = chosenScenario && chosenScenario === chosenMode
   return (
     <>
       <StageHeader
-        kicker="Next morning · incoming call"
-        title={showChoices ? 'Z is calling — recap is ready' : 'Private whisper recap'}
-        note={showChoices ? 'RINGING — matched to paused thread' : 'Rime on the private track'}
+        kicker={T('recap.kicker')}
+        title={showChoices ? T('recap.title_choices') : T('recap.title_playing')}
+        note={showChoices ? T('recap.note_choices') : T('recap.note_playing')}
       />
       {showChoices && recap && (
         <div className="choice-panel">
           <ChoiceCard
             icon={<Mic size={18} />}
-            title="Barge in by voice"
-            desc="Hear the recap, and when you’ve heard enough say: “I know, just pick up the call.” The system stops talking and answers for you."
-            cta="Option A — barge-in"
+            title={T('recap.option_barge.t')}
+            desc={T('recap.option_barge.d')}
+            cta={T('recap.option_barge.cta')}
             onClick={() => sim.chooseRecapMode('barge')}
             hot
           />
           <ChoiceCard
             icon={<Ear size={18} />}
-            title="Hear the full recap"
-            desc="Let the whole recap play in your earpiece. When it ends, you answer already 100% caught up."
-            cta="Option B — listen fully"
+            title={T('recap.option_full.t')}
+            desc={T('recap.option_full.d')}
+            cta={T('recap.option_full.cta')}
             onClick={() => sim.chooseRecapMode('full')}
           />
-          <button className="skip-answer" onClick={sim.answerCall}>Answer now without the recap (skip)</button>
+          <ChoiceCard
+            icon={<AudioLines size={18} />}
+            title={T('recap.option_pickup.t')}
+            desc={T('recap.option_pickup.d')}
+            cta={T('recap.option_pickup.cta')}
+            onClick={() => sim.chooseRecapMode('autoPickup')}
+          />
+          {preset && <p className="recap-preset-note"><Sparkles size={13} /> {T('recap.preset_note')}</p>}
+          <button className="skip-answer" onClick={sim.answerCall}>{T('recap.skip')}</button>
         </div>
       )}
 
-      {(recapState === RECAP_STATE.LOADING || recapState === RECAP_STATE.PLAYING || recapState === RECAP_STATE.HALTED || recapState === RECAP_STATE.DONE || recapState === RECAP_STATE.ERROR) && recap && (
+      {(recapState === RECAP_STATE.LOADING || recapState === RECAP_STATE.PLAYING || recapState === RECAP_STATE.HALTED || recapState === RECAP_STATE.DONE || recapState === RECAP_STATE.ERROR || recapState === RECAP_STATE.NEEDS_GESTURE) && recap && (
         <RecapPlayer sim={sim} />
       )}
       {recapState === RECAP_STATE.ERROR && !recap && (
         <div className="inline-note warn"><AlertTriangle size={14} /> {sim.error || 'Recap could not be prepared — the stored thread may be missing.'}</div>
       )}
       {recapState === RECAP_STATE.ERROR && !recap && (
-        <div className="stage-actions"><button className="primary-button" onClick={sim.answerCall}><Phone size={15} /> Answer Z anyway</button></div>
+        <div className="stage-actions"><button className="primary-button" onClick={sim.answerCall}><Phone size={15} /> {T('recap.answer_error')}</button></div>
       )}
     </>
   )
@@ -456,9 +555,12 @@ function ChoiceCard({ icon, title, desc, cta, onClick, hot }) {
 }
 
 function RecapPlayer({ sim }) {
-  const { recap, recapState, spokenIdx, listening, chosenMode, bargeResult, audioStatus } = sim
+  const { recap, recapState, spokenIdx, listening, chosenMode, bargeResult, audioStatus, callStateLabel, pickupCountdownS, mockLineSpoken, mockError, lang } = sim
+  const T = (k, v) => format(t(k, lang), v)
   const sentences = recap?.sentences || []
   const playing = recapState === RECAP_STATE.PLAYING
+  const mockRun = chosenMode === 'autoPickup'
+  const connected = mockRun && callStateLabel === 'CONNECTED'
   return (
     <>
       <div className="recap-captions">
@@ -468,89 +570,148 @@ function RecapPlayer({ sim }) {
           </p>
         ))}
       </div>
+      {mockRun && (
+        <div className="recap-mockbar">
+          {!connected && pickupCountdownS != null && (
+            <span className="pickup-chip"><Clock3 size={12} /> {T('recap.pickup_chip', { s: pickupCountdownS })}</span>
+          )}
+          {connected && playing && (
+            <span className="pickup-chip ok"><PhoneCall size={12} /> {T('recap.connected_chip')}</span>
+          )}
+          {mockLineSpoken && (
+            <span className={`mock-now ${mockLineSpoken.ducked ? 'ducked' : ''}`}>
+              <AudioLines size={13} />
+              {mockLineSpoken.ducked ? T('recap.mock_line_ducked') : T('recap.mock_line_now')} “{mockLineSpoken.text}”
+            </span>
+          )}
+        </div>
+      )}
+      {mockError && <div className="inline-note warn"><AlertTriangle size={14} /> {mockError}</div>}
       <div className="recap-statusline">
-        {playing && <span className="live-label"><span className="pulse" /> RIME SPEAKING ON PRIVATE TRACK</span>}
-        {recapState === RECAP_STATE.LOADING && <span className="loading-label"><Loader2 className="spin" size={12} /> synthesizing with Rime…</span>}
-        {recapState === RECAP_STATE.DONE && <span className="done-label"><Check size={13} /> Recap complete</span>}
-        {recapState === RECAP_STATE.ERROR && <span className="err-label"><AlertTriangle size={13} /> Rime unavailable — see error below. Answer to continue.</span>}
+        {playing && <span className={`live-label ${connected ? 'ok' : ''}`}><span className="pulse" /> {connected ? T('recap.status_connected') : T('recap.status_playing')}</span>}
+        {recapState === RECAP_STATE.LOADING && <span className="loading-label"><Loader2 className="spin" size={12} /> {T('recap.status_loading')}</span>}
+        {recapState === RECAP_STATE.DONE && <span className="done-label"><Check size={13} /> {T('recap.status_done')}</span>}
+        {recapState === RECAP_STATE.ERROR && <span className="err-label"><AlertTriangle size={13} /> {T('recap.status_error')}</span>}
+        {recapState === RECAP_STATE.NEEDS_GESTURE && (
+          <button className="tap-to-play" onClick={sim.resumeRecapPlayback}>
+            <Play size={13} /> {T('recap.tap_to_play')}
+          </button>
+        )}
         {recapState === RECAP_STATE.HALTED && bargeResult && (
           <span className={`halt-label ${bargeResult.intent === 'ANSWER_CALL' ? 'answer' : 'stop'}`}>
             {bargeResult.intent === 'ANSWER_CALL' ? <PhoneCall size={13} /> : <Square size={13} />}
-            Barge-in → {INTENT_LABELS[bargeResult.intent]} · halted in {bargeResult.haltedMs}ms
+            {T('recap.halt_answer', { intent: INTENT_LABELS[bargeResult.intent], ms: bargeResult.haltedMs })}
           </span>
         )}
       </div>
       <MicChip sim={sim} />
       <div className="stage-foot">
         <p className="stage-hint">
-          {chosenMode === 'barge' && playing && 'Full-duplex: your mic stays hot while the recap plays. Say the phrase whenever you’re ready.'}
-          {chosenMode === 'full' && playing && 'Option B — the recap plays to the end. Interrupt it anytime with the test buttons below.'}
-          {!playing && recapState !== RECAP_STATE.HALTED && recapState !== RECAP_STATE.DONE && 'Choose an option above to hear the recap.'}
+          {chosenMode === 'autoPickup' && playing && !connected && T('recap.hint_pickup_ring')}
+          {chosenMode === 'autoPickup' && playing && connected && T('recap.hint_pickup_connected')}
+          {chosenMode === 'autoPickup' && !playing && recapState === RECAP_STATE.DONE && T('recap.hint_pickup_done')}
+          {chosenMode === 'barge' && playing && T('recap.hint_barge')}
+          {chosenMode === 'full' && playing && T('recap.hint_full')}
+          {!playing && recapState !== RECAP_STATE.HALTED && recapState !== RECAP_STATE.DONE && recapState !== RECAP_STATE.NEEDS_GESTURE && T('recap.hint_pick')}
         </p>
         {playing && (
           <div className="barge-tests">
             <button className="barge-test answer" onClick={() => sim.testPhrase('I know, just pick up the call')}>
-              <Mic size={14} /> Test: “I know, just pick up the call”
+              <Mic size={14} /> {T('recap.test_answer')}
             </button>
             <button className="barge-test stop" onClick={() => sim.testPhrase('Hold on, one second')}>
-              <Square size={13} /> Test: “Hold on” (stop-only)
+              <Square size={13} /> {T('recap.test_stop')}
             </button>
           </div>
         )}
         {(recapState === RECAP_STATE.HALTED || recapState === RECAP_STATE.DONE) && (
           <div className="stage-actions">
-            <button className="primary-button" onClick={sim.answerCall}><Phone size={15} /> Answer Z now</button>
-            <button className="text-button" onClick={sim.replayRecap}><RotateCcw size={14} /> Replay recap</button>
+            <button className="primary-button" onClick={sim.answerCall}><Phone size={15} /> {T('recap.answer_now')}</button>
+            <button className="text-button" onClick={sim.replayRecap}><RotateCcw size={14} /> {T('recap.replay')}</button>
           </div>
         )}
         {recapState === RECAP_STATE.ERROR && (
           <div className="stage-actions">
-            <button className="primary-button" onClick={sim.answerCall}><Phone size={15} /> Answer Z anyway</button>
+            <button className="primary-button" onClick={sim.answerCall}><Phone size={15} /> {T('recap.answer_error')}</button>
           </div>
         )}
       </div>
       {audioStatus === 'error' && sim.error && <div className="inline-note warn"><AlertTriangle size={14} /> {sim.error}</div>}
       {sim.bargeResult?.intent === 'DISMISS_RECAP' && (
-        <div className="barge-outcome"><span><Square size={13} /> stop-only</span><p>Generic interrupt — the recap halted but Z keeps ringing. You stay in control.</p></div>
+        <div className="barge-outcome"><span><Square size={13} /> {T('recap.stop_only')}</span><p>{T('recap.stop_only_note')}</p></div>
       )}
     </>
   )
 }
 
 function CallTwoStage({ sim }) {
+  const T = (k, v) => format(t(k, sim.lang), v)
   const auto = sim.bargeResult?.intent === 'ANSWER_CALL'
+  const mockRun = sim.chosenMode === 'autoPickup'
   return (
     <>
-      <StageHeader kicker="Now · call reconnected" title="You picked up already caught up" note={auto ? 'AUTO-ANSWERED' : 'CONNECTED'} />
+      <StageHeader
+        kicker={T('call2.kicker')}
+        title={mockRun ? T('call2.title_mock') : T('call2.title_live')}
+        note={auto ? T('call2.note_auto') : mockRun ? T('call2.note_mock') : T('call2.note_live')}
+      />
       {auto && (
         <div className="completion-pill ok">
-          <PhoneCall size={14} /> Barge-in “{sim.bargeResult.phrase}” → recap halted in {sim.bargeResult.haltedMs}ms → auto-answered. Z never heard the recap.
+          <PhoneCall size={14} /> {T('call2.barge_pill', { phrase: sim.bargeResult.phrase, ms: sim.bargeResult.haltedMs })}
         </div>
       )}
-      <TranscriptList turns={sim.call2Turns} listening={sim.listening} interimText={sim.interimText} />
-      <MicChip sim={sim} />
+      {mockRun && sim.bargeResult?.intent && (
+        <div className="completion-pill ok">
+          <PhoneCall size={14} /> {T('call2.mock_pill', { phrase: sim.bargeResult.phrase })}
+        </div>
+      )}
+      <TranscriptList turns={sim.call2Turns} listening={sim.listening} interimText={sim.interimText} lang={sim.lang} />
+      {mockRun ? <MockAutoPanel sim={sim} /> : <TurnRecorder sim={sim} sessionId="sim-demo-call-2" />}
       <div className="stage-foot">
-        <p className="stage-hint">Z doesn’t know you were briefed — that’s the point. Answer naturally, then end the call when done.</p>
-        <SuggestionChips sim={sim} listKey="call2" />
+        <p className="stage-hint">
+          {mockRun ? T('call2.hint_mock') : T('call2.hint_live')}
+        </p>
         <div className="stage-actions">
-          <button className="primary-button" onClick={sim.endCall}><PhoneOff size={15} /> End call</button>
-          <span className="stage-aside">Rime recap stays on the private track — Z heard only normal ringing and your “hello”.</span>
+          <button className="primary-button" onClick={sim.endCall}><PhoneOff size={15} /> {T('call2.end')}</button>
+          <span className="stage-aside">
+            {mockRun ? T('call2.aside_mock') : T('call2.aside_live')}
+          </span>
         </div>
       </div>
     </>
   )
 }
 
+function MockAutoPanel({ sim }) {
+  const T = (k) => t(k, sim.lang)
+  const { mockLineSpoken } = sim
+  return (
+    <div className="auto-live-panel">
+      {mockLineSpoken && (
+        <div className="mock-now">
+          <AudioLines size={13} /> {T('recap.mock_line_now')} “{mockLineSpoken.text}”
+        </div>
+      )}
+      <MicChip sim={sim} />
+      <p className="stage-hint">{T('mock_auto.hint')}</p>
+    </div>
+  )
+}
+
 function CompletedStage({ sim }) {
+  const T = (k, v) => format(t(k, sim.lang), v)
   return (
     <>
-      <StageHeader kicker="Wrap-up" title="Simulation complete" note="all events timestamped" />
+      <StageHeader kicker={T('done.kicker')} title={T('done.title')} note={T('done.note')} />
       <div className="completed-summary">
-        <div className="completion-pill ok"><ShieldCheck size={14} /> Caught up before “hello” — recap never left the private track.</div>
-        {sim.metrics?.intent && <div className="completion-pill"><PhoneCall size={14} /> Barge-in phrase → {sim.metrics.intent}</div>}
+        <div className="completion-pill ok"><ShieldCheck size={14} /> {T('done.pill1')}</div>
+        {sim.metrics?.turns != null && <div className="completion-pill"><Mic size={14} /> {T('done.pill2', { n: sim.metrics.turns })}</div>}
+        {sim.metrics?.intent && <div className="completion-pill"><PhoneCall size={14} /> {T('done.pill3', { intent: sim.metrics.intent })}</div>}
+        {sim.metrics?.autoPickupMode === 'network' && <div className="completion-pill"><PhoneCall size={14} /> {T('done.pill4')}</div>}
+        {sim.metrics?.mockLines > 0 && <div className="completion-pill"><AudioLines size={14} /> {T('done.pill5', { n: sim.metrics.mockLines })}{sim.metrics.echoFiltered ? ` · ${sim.metrics.echoFiltered} mic echo${sim.metrics.echoFiltered === 1 ? '' : 'es'} filtered` : ''}</div>}
         <div className="stage-actions">
-          <button className="primary-button" onClick={sim.fullReset}><RotateCcw size={15} /> Reset & replay</button>
-          <button className="text-button" onClick={() => exportLog(sim)}><Download size={14} /> Export event log (JSON)</button>
+          <button className="primary-button" onClick={sim.fullReset}><RotateCcw size={15} /> {T('done.reset')}</button>
+          <button className="text-button" onClick={() => exportLog(sim)}><Download size={14} /> {T('done.export')}</button>
         </div>
       </div>
     </>
@@ -560,7 +721,7 @@ function CompletedStage({ sim }) {
 function exportLog(sim) {
   const payload = {
     generated_at: new Date().toISOString(),
-    scenario: 'returning caller · barge-in voice interrupt',
+    scenario: 'live two-way conversation · Rime recap · barge-in voice interrupt',
     thread: { caller: CALLER.number, caller_name: CALLER.name },
     events: sim.events.map(({ tsLabel, name, detail, meta }) => ({ ts: tsLabel, event: name, detail, meta })),
     metrics: sim.metrics,
@@ -576,16 +737,17 @@ function exportLog(sim) {
 
 // ── Right column: append-only event log ──────────────────────────────────────
 function EventLogPanel({ sim }) {
-  const { events } = sim
+  const { events, lang } = sim
+  const T = (k) => t(k, lang)
   return (
     <section className="card event-card">
       <div className="card-title">
-        <div><span className="kicker">Append-only feed</span><h3>Event log</h3></div>
+        <div><span className="kicker">{T('log.kicker')}</span><h3>{T('log.title')}</h3></div>
         <span className="live-label"><span className="pulse" /> LIVE</span>
       </div>
       <div className="event-list">
         {events.length ? events.map((item) => <EventRow key={item.id} item={item} />) : (
-          <div className="empty-log"><Radio size={20} /><span>Waiting for a call event…</span></div>
+          <div className="empty-log"><Radio size={20} /><span>{T('log.empty')}</span></div>
         )}
       </div>
     </section>
@@ -608,17 +770,18 @@ function EventRow({ item }) {
 // ── Evidence strip (after completion) ────────────────────────────────────────
 function Evidence({ sim }) {
   const m = sim.metrics || {}
+  const T = (k) => t(k, sim.lang)
   return (
     <section className="evidence-strip" id="evidence">
-      <div className="section-heading compact-heading light"><div><span className="eyebrow"><Gauge size={14} /> Evidence, not claims</span><h2>Measured in this run.</h2></div></div>
+      <div className="section-heading compact-heading light"><div><span className="eyebrow"><Gauge size={14} /> {T('evidence.eyebrow')}</span><h2>{T('evidence.title')}</h2></div></div>
       <div className="metrics-grid">
-        <EvidenceCard value={m.recapLatencyMs != null ? `${(m.recapLatencyMs / 1000).toFixed(2)}s` : '—'} label="Match → first private audio" note="ring to recap speech, measured live" />
-        <EvidenceCard value={m.bargeHaltMs != null ? `${m.bargeHaltMs}ms` : '—'} label="Barge-in → playback halted" note={m.bargePhrase ? `phrase: “${m.bargePhrase}”` : 'no barge-in in this run'} />
-        <EvidenceCard value="0ms" label="Caller-side added latency" note="caller lane = ringback only — recap never touches it" />
-        <EvidenceCard value={m.freshnessChanged ? 'caught' : '—'} label="Freshness catch" note={m.freshnessDetail || 'no stored price to re-verify'} />
+        <EvidenceCard value={m.recapLatencyMs != null ? `${(m.recapLatencyMs / 1000).toFixed(2)}s` : '—'} label={T('evidence.latency.v')} note={T('evidence.latency.n')} />
+        <EvidenceCard value={m.bargeHaltMs != null ? `${m.bargeHaltMs}ms` : '—'} label={T('evidence.halt.v')} note={m.bargePhrase ? `phrase: “${m.bargePhrase}”` : T('evidence.no_barge')} />
+        <EvidenceCard value="0ms" label={T('evidence.caller.v')} note={T('evidence.caller.n')} />
+        <EvidenceCard value={m.freshnessChanged ? T('evidence.caught') : '—'} label={T('evidence.fresh.v')} note={m.freshnessDetail || T('evidence.no_source')} />
       </div>
       <div className="evidence-map">
-        {[['Recap start latency', m.recapLatencyMs != null ? 'measured' : 'n/a'], ['Barge-in latency', m.bargeHaltMs != null ? 'measured' : 'n/a'], ['Zero caller impact', 'architectural'], ['Freshness catch', m.freshnessChanged ? 'PASS' : 'n/a'], ['Intent correctness', m.intent || 'n/a'], ['Context fencing', 'single thread']].map(([label, status]) => (
+        {[[T('evidence.map.latency'), m.recapLatencyMs != null ? T('evidence.map.measured') : 'n/a'], [T('evidence.map.barge'), m.bargeHaltMs != null ? T('evidence.map.measured') : 'n/a'], [T('evidence.map.caller'), T('evidence.map.architectural')], [T('evidence.map.fresh'), m.freshnessChanged ? 'PASS' : 'n/a'], [T('evidence.map.intent'), m.intent || 'n/a'], [T('evidence.map.fencing'), T('evidence.map.single')]].map(([label, status]) => (
           <div className={`evidence-map-row ${status === 'PASS' || status === 'measured' || status === 'architectural' ? 'pass' : ''}`} key={label}>
             <span>{label}</span><b>{status === 'PASS' || status === 'measured' || status === 'architectural' ? <Check size={12} /> : null}{status}</b>
           </div>
@@ -639,4 +802,4 @@ function EvidenceCard({ value, label, note }) {
   )
 }
 
-createRoot(document.getElementById('root')).render(<SimApp />)
+createRoot(document.getElementById('root')).render(<SimApp />)

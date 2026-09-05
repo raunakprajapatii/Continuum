@@ -88,6 +88,22 @@ class RimeTtsBody(BaseModel):
     model: str | None = Field(
         default=None, description="Override the model ID (coda / mist_v2 / mist_v3)."
     )
+    time_scale_factor: float | None = Field(
+        default=None,
+        ge=0.5,
+        le=2.0,
+        description=(
+            "Speed multiplier (<1.0 = faster). Defaults to "
+            "settings.rime_time_scale_factor when omitted."
+        ),
+    )
+    lang: str | None = Field(
+        default=None,
+        description=(
+            "BCP-47 language for synthesis (en / hi). Defaults to "
+            "settings.rime_default_language when omitted."
+        ),
+    )
 
 
 class _RimeSynthesis:
@@ -104,12 +120,29 @@ def _rime_language_code(value: str) -> str:
 
     Rime's mist family requires 3-letter codes (``eng``); the shorter form
     (``en``) is rejected with "Language 'en' is not supported". coda accepts
-    both, so normalising to ``eng`` is safe for every model.
+    both, so normalising to ``eng`` is safe for every model.  Hindi is
+    ``hin`` on every model, and the code maps the UI's ``hi``/``hi-IN``
+    values accordingly.
     """
-    normalized = (value or "").strip().lower()
+    normalized = (value or "").strip().lower().split("-")[0]
     if normalized == "en":
         return "eng"
+    if normalized == "hi":
+        return "hin"
     return normalized or "eng"
+
+
+def _rime_enabled() -> bool:
+    """
+    True when a real Rime API key is configured.
+
+    ``USE_MOCKS=true`` still allows Rime when a key is present — Rime remains
+    the only TTS provider (AGENTS.md Rule 2); mocks only gate the other
+    services.  With no key at all the recap raises a clear error instead of
+    silently substituting another provider.
+    """
+    key = settings.rime_api_key or ""
+    return bool(key) and not key.startswith("YOUR_")
 
 
 async def _synthesize_rime(
@@ -117,33 +150,37 @@ async def _synthesize_rime(
     *,
     speaker: str | None = None,
     model: str | None = None,
+    time_scale_factor: float | None = None,
+    lang: str | None = None,
 ) -> _RimeSynthesis:
     """
     Call the Rime TTS API for ``text``.
 
     Raises HTTPException:
-      503 — mock mode is active (Rime is intentionally unavailable)
+      503 — no RIME_API_KEY configured (mock rehearsal / misconfigured env)
       502 — Rime was unreachable or declined the request
 
-    No other TTS provider is ever substituted (AGENTS.md Rule 2).
+    No other TTS provider is ever substituted (AGENTS.md Rule 2).  When a
+    real key is present Rime is used even under USE_MOCKS=true — mocks gate
+    STT/LLM/freshness, not the Rime voice.
     """
-    if settings.use_mocks:
+    if not _rime_enabled():
         raise HTTPException(
             status_code=503,
             detail=(
-                "Rime audio is unavailable while USE_MOCKS=true. "
-                "Set USE_MOCKS=false (and RIME_API_KEY in .env) to enable "
-                "the live Rime recap path."
+                "Rime audio is unavailable: no RIME_API_KEY configured "
+                "(USE_MOCKS=true rehearsal mode). Set RIME_API_KEY in .env "
+                "to enable the live Rime recap path."
             ),
         )
     payload = {
         "text": text,
         "modelId": (model or settings.rime_default_model).replace("_", ""),
         "speaker": speaker or settings.rime_default_speaker,
-        "lang": _rime_language_code(settings.rime_default_language),
+        "lang": _rime_language_code(lang or settings.rime_default_language),
         "samplingRate": 22050,
         "audioFormat": "wav",
-        "timeScaleFactor": settings.rime_time_scale_factor,
+        "timeScaleFactor": time_scale_factor or settings.rime_time_scale_factor,
     }
     headers = {
         "Authorization": f"Bearer {settings.rime_api_key}",
@@ -180,8 +217,14 @@ async def events() -> list[DashboardEvent]:
 @app.post("/api/private-recap-audio")
 async def private_recap_audio() -> Response:
     """Return Rime audio for the user-private dashboard monitor only."""
-    if settings.use_mocks:
-        raise HTTPException(status_code=503, detail="Rime audio is unavailable while USE_MOCKS=true.")
+    if not _rime_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Rime audio is unavailable: no RIME_API_KEY configured "
+                "(USE_MOCKS=true rehearsal mode)."
+            ),
+        )
     payload = {
         "text": _DEMO_RECAP,
         "modelId": settings.rime_default_model.replace("_", ""),
@@ -222,7 +265,13 @@ async def rime_tts(body: RimeTtsBody) -> Response:
     recap.  The response carries ``X-Continuum-Track`` so the dashboard can
     verify the audio is bound to the private whisper track only.
     """
-    synth = await _synthesize_rime(body.text, speaker=body.speaker, model=body.model)
+    synth = await _synthesize_rime(
+        body.text,
+        speaker=body.speaker,
+        model=body.model,
+        time_scale_factor=body.time_scale_factor,
+        lang=body.lang,
+    )
     return Response(
         content=synth.content,
         media_type=synth.media_type,
@@ -241,9 +290,7 @@ async def capabilities() -> dict:
     Report which live providers are usable right now so the demo UI can guide
     the presenter (provider badge values come from here as well).
     """
-    rime_enabled = bool(settings.rime_api_key) and not settings.rime_api_key.startswith(
-        "YOUR_"
-    ) and not settings.use_mocks
+    rime_enabled = _rime_enabled()
     # Report the voice/model the RimeTtsClient actually resolves to (the recap
     # pipeline swaps the placeholder "sol" for the Continuum optimal voice).
     from modules.voice.rime_tts_client import DEFAULT_CONTINUUM_SPEAKER
@@ -255,6 +302,16 @@ async def capabilities() -> dict:
     )
     effective_model = settings.rime_default_model
     stt_available = stt_bridge.stt_available()
+
+    # Report whether the recap writer can use Gemini (ConversationExtractor
+    # falls back to a deterministic heuristic when no key is configured).
+    from modules.brain.extractor import ConversationExtractor
+
+    llm = {
+        "enabled": bool(ConversationExtractor().api_key) and not settings.use_mocks,
+        "provider": "gemini" if settings.gemini_api_key else "llm",
+        "model": settings.llm_fast_model,
+    }
 
     freshness = {
         "enabled": False,
@@ -294,8 +351,12 @@ async def capabilities() -> dict:
                 )
             ),
         },
+        "llm": llm,
         "freshness": freshness,
-        "ready": rime_enabled and stt_available and freshness["enabled"],
+        # Readiness requires the two live spoken-output providers only. The
+        # freshness data source is optional: without one, fact checks report
+        # UNAVAILABLE and the recap simply omits staleness flags.
+        "ready": rime_enabled and stt_available,
     }
 
 
@@ -316,6 +377,15 @@ class SimRecapBody(BaseModel):
     caller_id: str = Field(..., min_length=1, max_length=120)
     session_id: str = Field(..., min_length=1, max_length=120)
     ring_window_s: float = Field(default=25.0, ge=5.0, le=60.0)
+    language: str = Field(
+        default="en",
+        min_length=2,
+        max_length=12,
+        description=(
+            "Recap spoken-language frame (en / hi). Fixed recap phrasing is "
+            "localised; thread memory content stays as recorded."
+        ),
+    )
 
 
 class SimResetBody(BaseModel):
@@ -378,6 +448,7 @@ async def sim_recap(body: SimRecapBody) -> dict:
             caller_id=body.caller_id,
             session_id=body.session_id,
             ring_window_s=body.ring_window_s,
+            language=body.language,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -407,16 +478,26 @@ async def sim_reset(body: SimResetBody) -> dict:
 
 
 @app.websocket("/api/stt/stream")
-async def stt_stream(ws: WebSocket, session_id: str = "demo") -> None:
+async def stt_stream(
+    ws: WebSocket,
+    session_id: str = "demo",
+    speaker: str = "USER",
+    language: str = "",
+) -> None:
     """
     Browser mic bridge: raw PCM16 16 kHz audio up, transcript JSON down.
+
+    ``speaker`` (USER or CALLER) labels every transcript event so both sides
+    of a live two-way conversation can be recorded from the same browser mic.
 
     Messages down:
         {type: "ready"} | {type: "transcript", speaker, text, is_final} | {type: "error"}
     """
     await ws.accept()
     try:
-        await stt_bridge.run_stt_relay(ws, session_id)
+        await stt_bridge.run_stt_relay(
+            ws, session_id, speaker=speaker, language=language or None
+        )
     except WebSocketDisconnect:
         pass  # presenter closed the tab / clicked away
     finally:
