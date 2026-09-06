@@ -239,6 +239,9 @@ def test_sim_recap_auto_language_follows_conversation() -> None:
         ("CALLER", "Hey, Z bhai yahan se bol raha hai, basmati rice ka quote check karo."),
         ("USER", "Haan theek hai, basmati ab $940 per tonne hai."),
         ("USER", "I'll check with finance aur kal tak confirm kar dunga."),
+        # The caller is the one cut off mid-sentence — the interruption note
+        # quotes the CALLER's truncated fragment, never the user's own words.
+        ("CALLER", "Achha, aur copper cathode ka quote bhi confirm kar lena, LME settlement aa gaya tha-"),
     ]
     for speaker, text in hinglish_turns:
         response = client.post(

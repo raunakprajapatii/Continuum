@@ -285,7 +285,6 @@ def find_price_mentions(text: str, max_products: int = 4) -> list[dict]:
                 continue
             nearest = min(candidates, key=lambda c: (c[0], c[1]))[2]
             product = _SKU_TO_PRODUCT[sku]
-            product = _SKU_TO_PRODUCT[sku]
             results.append(
                 {
                     "sku": product["sku"],

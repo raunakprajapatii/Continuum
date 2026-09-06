@@ -374,7 +374,13 @@ class ConversationExtractor:
         if not context and prior_summary and prior_summary.context:
             context = prior_summary.context
 
-        last_turn_text = valid_turns[-1].text if is_interrupted else None
+        # The "cut off mid-sentence" note only makes sense for the CALLER's
+        # truncated fragment (it can carry an anchor like a ticket number).
+        # If the agent (USER) was the one speaking when the line dropped, there
+        # is no caller fragment worth quoting — leave it unset.
+        last_turn_text = None
+        if is_interrupted and valid_turns and valid_turns[-1].speaker == Speaker.CALLER:
+            last_turn_text = valid_turns[-1].text
 
         return ThreadSummary(
             thread_id=thread_id,
@@ -580,7 +586,13 @@ Transcript:
                 commitments=commitments,
                 time_sensitive_facts=facts,
                 key_names=data.get("key_names", []),
-                last_spoken_turn_text=valid_turns[-1].text if is_interrupted else None,
+                # Only quote the caller's truncated fragment, never the user's own
+                # last turn (the "they were cut off" note refers to the caller).
+                last_spoken_turn_text=(
+                    valid_turns[-1].text
+                    if is_interrupted and valid_turns and valid_turns[-1].speaker == Speaker.CALLER
+                    else None
+                ),
                 created_at=prior_summary.created_at if prior_summary else now,
                 last_updated_at=now,
                 last_call_ended_at=now,

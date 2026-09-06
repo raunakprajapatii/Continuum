@@ -9,7 +9,6 @@ RIME_EVIDENCE.md, per blueprint § 13.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -31,14 +30,6 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Session-scoped event loop for async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture(scope="session")

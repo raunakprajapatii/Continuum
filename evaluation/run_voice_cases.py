@@ -21,6 +21,14 @@ import asyncio
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
+
+# Make the repo root importable when run directly as a script
+# (``python evaluation/run_voice_cases.py`` puts ``evaluation/`` on sys.path,
+# not the repo root).
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 import httpx
 
