@@ -15,16 +15,19 @@ export const SESSIONS = {
 
 export const PRIVATE_TRACK_ID = 'continuum-private-whisper'
 
-// ── Spoken language (fixed — no EN/HI UI switch) ─────────────────────────────
-// The website copy is always English; the *voice* layer is Hinglish:
-//   - the mic transcribes Hindi with the Nova-3 Hindi model (`hi` — Deepgram's
+// ── Spoken language (auto — follows the conversation) ────────────────────────
+// The website copy is always English; the *voice* layer follows the language
+// the call was actually spoken in:
+//   - the mic transcribes with the Nova-3 Hindi model (`hi` — Deepgram's
 //     `multi` mode is notorious for misdetecting Hindi as Spanish). The
 //     backend romanizes the Devanagari into Latin-script Hinglish, so "hello
 //     भाई कैसे हो" arrives as "hello bhai kaise ho".
-//   - the recap is built/spoken in Hinglish (`hi` selects the Hinglish frames
-//     on the backend and Rime's Hindi-accented voice `nadi`)
+//   - RECAP_LANG='auto': the backend inspects the stored thread and picks
+//     `en` for English conversations (English frames, `eyre` voice) and `hi`
+//     for Hindi / Hinglish conversations (Hinglish frames, `nadi` voice).
+//   - the scripted caller (mock Z) speaks the same language as the recap.
 export const STT_LANG = 'hi' // Hindi STT → romanized to Hinglish on the backend
-export const RECAP_LANG = 'hi' // Hinglish spoken recap
+export const RECAP_LANG = 'auto' // recap language follows the conversation
 
 // Who records through the shared browser mic. USER = User 1 (you), CALLER =
 // User 2 (Z in the demo narrative). The labels map 1:1 onto the backend
@@ -49,23 +52,42 @@ export const AUTO_PICKUP = {
 // as CALLER turns — it never has to be "taken as input" from the mic. gapMs
 // is silence after each line so the presenter can reply.
 //
-// Z speaks HINGLISH too (Latin script) so the whole India demo — recap,
-// caller, and your voice input — is one Hinglish experience. Z's voice is
-// `taru`, Rime's native Hindi male voice on coda (lang hi); the recap whisper
-// on the private track stays `nadi` (female Hindi).
+// The script IS the Meridian enterprise scenario: Z is the procurement
+// manager for a textiles client confirming commodity quotes against the
+// live enterprise catalog (mocks/enterprise) — Basmati rice 1121 ($940/t),
+// Copper cathode ($8,940/t, LME-linked) and Shankar-6 cotton ($1,275/bale).
+// The product names + $-prices are exactly what the Brain extractor keys as
+// `price_<sku>` facts, so the freshness checker can re-verify them against
+// the feed on port 8001.
+//
+// Z speaks the SAME language the recap resolved to (EN or HI) so the whole
+// India demo — recap, caller, and your voice input — is one language.
+// Voices on coda: 'taru' (male Hindi) for Hinglish, 'cupola' (male,
+// professional American) for English — both distinct from the recap whisper
+// ('nadi' / 'eyre').
 export const MOCK_CALLER = {
-  speaker: 'taru', // male native Hindi Rime voice (coda) — distinct from the recap whisper 'nadi'
-  language: RECAP_LANG, // 'hi' — Hinglish script, spoken with the Hindi voice
+  speakers: { en: 'cupola', hi: 'taru' }, // male caller voice per recap language
+  language: RECAP_LANG, // resolved to the recap's actual language per run
   model: null, // inherit the backend default (coda)
   timeScaleFactor: 1.0, // natural pace, not the sped-up recap cadence
   duckedVolume: 0.3, // while the recap whisper is still playing
   fullVolume: 0.85, // once live (recap finished / interrupted)
-  lines: [
-    { text: 'Hey — hello? Sun paa rahe ho? Network ne finally call connect kar di.', gapMs: 2600 },
-    { text: 'To, kya aapko finance se volume discount ke baare mein poochhne ka mauka mila?', gapMs: 3200 },
-    { text: 'Aur kya hum Q3 numbers par ab bhi agree hain?', gapMs: 2800 },
-    { text: 'Theek hai, meri taraf se sab clear. Sorting out karne ke liye thanks.', gapMs: 0 },
-  ],
+  lines: {
+    en: [
+      { text: 'Hey — hello? Can you hear me? The network finally connected the call.', gapMs: 2600 },
+      { text: 'So, did you get a chance to check the Basmati rice 1121 quote? Export grade is at $940 per tonne.', gapMs: 3200 },
+      { text: 'And on the copper cathode — the LME settlement came through. Last quoted $8,940 per tonne.', gapMs: 2800 },
+      { text: 'Great. And the Shankar 6 cotton bales — can we lock $1,275?', gapMs: 2600 },
+      { text: 'Perfect. I will send the revised purchase order for the basmati by tomorrow morning.', gapMs: 0 },
+    ],
+    hi: [
+      { text: 'Hey — hello? Sun paa rahe ho? Network ne finally call connect kar di.', gapMs: 2600 },
+      { text: 'To, basmati rice 1121 ka quote check kiya? Export grade ab $940 per tonne hai.', gapMs: 3200 },
+      { text: 'Aur copper cathode — LME settlement aa gaya. Last quote $8,940 per tonne tha.', gapMs: 2800 },
+      { text: 'Achha. Aur Shankar 6 cotton bales — $1,275 par lock kar sakte hain?', gapMs: 2600 },
+      { text: 'Perfect. Kal subah basmati ka revised purchase order bhej dunga.', gapMs: 0 },
+    ],
+  },
 }
 
 // ── Barge-in phrase examples (demo script §03) ──────────────────────────────

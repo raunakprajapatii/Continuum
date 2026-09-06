@@ -127,6 +127,24 @@ def get_tts_client() -> RimeTtsClient:
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
+def _resolve_recap_language(requested: str, summary: Optional[ThreadSummary]) -> str:
+    """
+    Resolve the requested recap language to a concrete ``en`` / ``hi``.
+
+    An explicit ``en`` / ``hi`` request wins. Anything else (``auto``,
+    ``None``, unknown) follows the language the conversation was actually
+    spoken in, as stored on the thread by the extractor — so an English call
+    gets an English recap and a Hindi / Hinglish call gets Hinglish frames.
+    """
+    requested = (requested or "").strip().lower()
+    if requested.startswith("hi"):
+        return "hi"
+    if requested.startswith("en"):
+        return "en"
+    detected = ((summary.language if summary is not None else "") or "").strip().lower()
+    return "hi" if detected.startswith("hi") else "en"
+
+
 def _speaker_enum(value: str) -> Speaker:
     try:
         return Speaker(value.upper())
@@ -250,7 +268,7 @@ async def build_reconnect_recap(
     caller_id: str,
     session_id: str,
     ring_window_s: float = 25.0,
-    language: str = "en",
+    language: str = "auto",
 ) -> dict[str, Any]:
     """
     Produce a ready-to-speak recap for a returning caller.
@@ -263,7 +281,11 @@ async def build_reconnect_recap(
           -> RimeTtsClient.make_request()      (step 3, timed)
 
     ``language`` localises the fixed recap phrasing (en / hi) — thread-memory
-    content is kept exactly as it was recorded.
+    content is kept exactly as it was recorded. An explicit ``en`` / ``hi``
+    wins; ``auto`` (the default) follows the language the conversation was
+    actually spoken in (``ThreadSummary.language``, set by the extractor), so
+    an English call gets an English recap and a Hindi / Hinglish call gets
+    Hinglish frames and the Hindi-accented voice.
 
     Returns a JSON-safe payload containing the final spoken text plus the
     freshness results and per-step timings for the on-screen event log.
@@ -276,6 +298,8 @@ async def build_reconnect_recap(
         raise LookupError(
             f"No stored thread for caller {caller_id!r}. Complete call one first."
         )
+
+    effective_language = _resolve_recap_language(language, summary)
 
     recap_request = build_recap_request(
         summary=summary,
@@ -294,7 +318,7 @@ async def build_reconnect_recap(
         summary=recap_request.summary,
         freshness=freshness,
         urgency=recap_request.urgency,
-        language=language,
+        language=effective_language,
     )
     step2_ms = int((time.monotonic() - t0) * 1000)
 
@@ -303,7 +327,7 @@ async def build_reconnect_recap(
     tts_request = get_tts_client().make_request(
         recap_request=recap_request,
         spoken_text=text,
-        language=language,
+        language=effective_language,
     )
     step3_ms = int((time.monotonic() - t0) * 1000)
 

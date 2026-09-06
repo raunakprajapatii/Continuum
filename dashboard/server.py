@@ -391,12 +391,14 @@ class SimRecapBody(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=120)
     ring_window_s: float = Field(default=25.0, ge=5.0, le=60.0)
     language: str = Field(
-        default="en",
+        default="auto",
         min_length=2,
         max_length=12,
         description=(
-            "Recap spoken-language frame (en / hi). Fixed recap phrasing is "
-            "localised; thread memory content stays as recorded."
+            "Recap spoken-language frame: 'en' / 'hi' force a language, 'auto' "
+            "(default) follows the language the conversation was spoken in. "
+            "Fixed recap phrasing is localised; thread memory content stays as "
+            "recorded."
         ),
     )
 

@@ -172,13 +172,17 @@ auto-pickup** — then press **Start the simulation**; the chosen test case is
 carried through the whole run and auto-starts at the callback recap.
 
 **Language model (no switch):** the dashboard copy is English only — there is
-no EN/HI toggle. The *voice layer* is fixed to Hinglish: the mic transcribes
-with the Deepgram Nova-3 Hindi model (`language=hi` — `multi` misdetects Hindi
-as Spanish) and the backend romanizes the Devanagari to Latin-script Hinglish,
-so "hello भाई कैसे हो" arrives as "hello bhai kaise ho". Gemini writes
-the recap in Hinglish (Latin script — never Devanagari), and Rime speaks it
-with the Hindi-accented voice `nadi` (`lang=hin`). The scripted Z in the
-auto-pickup test case also speaks Hinglish with the male Hindi voice `taru`.
+no EN/HI toggle. The *voice layer follows the conversation*: the mic
+transcribes with the Deepgram Nova-3 Hindi model (`language=hi` — `multi`
+misdetects Hindi as Spanish) and the backend romanizes the Devanagari to
+Latin-script Hinglish, so "hello भाई कैसे हो" arrives as "hello bhai kaise
+ho". The recap language is auto-detected from the call (`RECAP_LANG=auto`):
+an English call gets an English recap on Rime's `eyre` voice, a Hindi /
+Hinglish call gets Hinglish frames (Latin script — never Devanagari) on the
+Hindi-accented `nadi` voice. The scripted Z in the auto-pickup test case
+speaks the same language as the recap (`cupola` for English, `taru` for
+Hinglish) and follows the Meridian enterprise scenario — confirming Basmati
+rice 1121, copper cathode and Shankar-6 cotton quotes from the live catalog.
 
 > **Note on the LiveKit transport path** (`modules/transport/`): it needs the
 > venv Python 3.12 (LiveKit plugins refuse 3.13+). Run it as

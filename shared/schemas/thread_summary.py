@@ -100,6 +100,24 @@ class ThreadSummary(BaseModel):
             "Keep it under 20 words."
         ),
     )
+    context: str = Field(
+        default="",
+        description=(
+            "1-3 natural spoken sentences of real substance behind the headline "
+            "(what was discussed, decided, still open). Spoken in the recap after "
+            "the headline so a short call never collapses to a bare headline + "
+            "interruption note. Never filler; may be empty."
+        ),
+    )
+    language: str = Field(
+        default="en",
+        description=(
+            "Language the conversation was actually spoken in: 'en' for English, "
+            "'hi' for Hindi / Hinglish (Latin-script Hinglish counts as 'hi'). "
+            "The recap builder localises its fixed frames (freshness flag, "
+            "next-action lead-in, interruption note) to match."
+        ),
+    )
     open_items: list[str] = Field(
         default_factory=list,
         description="Unresolved questions or topics still pending from either party.",
