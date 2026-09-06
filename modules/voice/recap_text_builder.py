@@ -19,13 +19,15 @@ Rime Prompting Guide — all 8 rules are enforced by ``RimePromptValidator``
   8. End with the single most useful next action, if one exists.
 
 Recap quality (light + short):
-  The recap is a PURE recap — headline first, then only a changed-fact flag
-  (freshness), then one next action. A standalone "still open / open items"
-  sentence is deliberately NOT emitted: it only repeats the headline or the
-  next action, which is exactly the kind of filler the demo should never hear.
-  The only extra that may appear (long ring window only) is a short note when
-  the previous call dropped mid-sentence, because that fragment can carry a
-  ticket number the agent needs.
+  The recap is headline first, then the extracted context sentence(s) — the
+  substance behind the headline (what was discussed, decided, still open) —
+  then only a changed-fact flag (freshness), then one next action. The context
+  is what stops a recap from collapsing into a bare headline + "call got cut"
+  note. A standalone "still open / open items" sentence is deliberately NOT
+  emitted: it only repeats the headline or the next action. The only extra
+  that may appear (long ring window only) is a short note when the previous
+  call dropped mid-sentence, because that fragment can carry a ticket number
+  the agent needs.
 
 ``language`` selects the fixed *frames* only (freshness flag, interruption
 note, next-action lead-in):
@@ -235,14 +237,15 @@ class RecapTextBuilder:
         commitments — is kept exactly as it was recorded so nothing is ever
         invented or translated on the fly.
 
-        Structure (pure recap — light and short):
+        Structure (light and short):
 
           HEADLINE_ONLY:  headline.
-          STANDARD:       headline → freshness flags (changed facts only)
+          STANDARD:       headline → context (substance, ≤ 2 short sentences)
+                          → freshness flags (changed facts only)
                           → single next action.
-          EXTENDED:       headline → freshness flags (incl. unavailable facts)
-                          → short mid-sentence-drop note (if interrupted)
-                          → single next action.
+          EXTENDED:       headline → context → freshness flags (incl.
+                          unavailable facts) → short mid-sentence-drop note
+                          (if interrupted) → single next action.
 
         A standalone open-items sentence is intentionally omitted — it only
         repeats the headline or the next action.
@@ -254,6 +257,9 @@ class RecapTextBuilder:
         parts: list[str] = []
 
         # ── Rule 1: Headline first, no preamble ───────────────────────────────
+        # When extraction produced only a generic placeholder headline, lift
+        # the real substance from the context sentence instead — a recap that
+        # leads with "Call completed." tells the agent nothing.
         headline = self._format_headline(summary)
         parts.append(headline)
 
@@ -263,6 +269,14 @@ class RecapTextBuilder:
             text = self.wrap_ids(text)
             self._validate(text)
             return text
+
+        # ── Substance behind the headline ─────────────────────────────────────
+        # Gemini's ``context`` field is what keeps a recap from collapsing into
+        # a bare headline + "call got cut" note: it carries what was discussed,
+        # decided and still open. Kept to two short spoken sentences.
+        context = self._format_context(summary)
+        if context:
+            parts.append(context)
 
         # ── Rule 5: Freshness flags early ─────────────────────────────────────
         if freshness.any_changed:
@@ -371,12 +385,65 @@ class RecapTextBuilder:
 
     @staticmethod
     def _format_headline(summary: ThreadSummary) -> str:
-        """Rule 1 — one-sentence headline from ``summary.headline``."""
+        """
+        Rule 1 — one-sentence headline from ``summary.headline``.
+
+        Generic placeholder headlines ("Call completed." etc.) are replaced
+        by the first context sentence when one exists, so the recap always
+        leads with real substance.
+        """
         headline = summary.headline.strip()
+        if summary.context:
+            generic = (
+                headline.lower().rstrip(".") in (
+                    "call completed",
+                    "call ended without spoken turns",
+                    "call with caller ended without spoken turns",
+                )
+            )
+            if generic:
+                first = RecapTextBuilder._first_sentence(summary.context)
+                if first:
+                    words = first.split()
+                    if len(words) > 20:
+                        first = " ".join(words[:20])
+                    headline = first
         # Ensure it ends with punctuation
         if not headline.endswith((".", "!", "?")):
             headline += "."
         return headline
+
+    @staticmethod
+    def _first_sentence(text: str) -> str:
+        """Return the first sentence of a text block (or the whole block)."""
+        sentences = [
+            s.strip()
+            for s in re.split(r"(?<=[.!?])\s+", text)
+            if s.strip()
+        ]
+        return sentences[0] if sentences else text.strip()
+
+    @staticmethod
+    def _format_context(summary: ThreadSummary) -> str:
+        """
+        Spoken context behind the headline: at most two sentences, each capped
+        at 20 words so the Rime prompt-guide validation can never fail on the
+        extracted context.
+        """
+        if not summary.context:
+            return ""
+        sentences = [
+            s.strip()
+            for s in re.split(r"(?<=[.!?])\s+", summary.context)
+            if s.strip()
+        ]
+        kept: list[str] = []
+        for sentence in sentences[:2]:
+            words = sentence.split()
+            if len(words) > 20:
+                words = words[:20]
+            kept.append(" ".join(words))
+        return " ".join(kept)
 
     @staticmethod
     def _spoken_flag(result: FactCheckResult, hi: bool = False) -> str:

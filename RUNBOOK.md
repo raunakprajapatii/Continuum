@@ -17,14 +17,18 @@ Open **http://localhost:5173** in Chrome. The launch screen first asks for the
 Pick one, then press **Start the simulation** — the chosen test case is carried
 through the whole run and auto-starts when the callback recap is ready.
 
-**Language model (no switch):** the dashboard copy is English only. The voice
-layer is fixed to Hinglish: the mic transcribes with the Deepgram Nova-3 Hindi
-model (`language=hi` — `multi` misdetects Hindi as Spanish), and the backend
-romanizes the Devanagari to Latin-script Hinglish ("hello भाई कैसे हो" →
-"hello bhai kaise ho"). Gemini writes the recap in Hinglish (Latin script),
-and Rime speaks it with the Hindi-accented voice `nadi` (`lang=hin`).
-The scripted Z in the auto-pickup test case also speaks Hinglish with the male
-Hindi voice `taru`.
+**Language model (no switch):** the dashboard copy is English only — the
+*voice layer follows the conversation*. The mic transcribes with the Deepgram
+Nova-3 Hindi model (`language=hi` — `multi` misdetects Hindi as Spanish), and
+the backend romanizes the Devanagari to Latin-script Hinglish ("hello भाई
+कैसे हो" → "hello bhai kaise ho"). The recap language is auto-detected from
+the call (`RECAP_LANG=auto`): English calls get an English recap on Rime's
+`eyre` voice; Hindi / Hinglish calls get Hinglish frames (Latin script) on the
+Hindi-accented `nadi` voice. The scripted Z in the auto-pickup test case
+speaks the same language as the recap (`cupola` for English, `taru` for
+Hinglish) and follows the **Meridian enterprise scenario** — confirming
+Basmati rice 1121, copper cathode and Shankar-6 cotton quotes from the live
+catalog (`mocks/enterprise`, port 8001).
 
 ## What the simulation does now (live, no mocks)
 

@@ -110,6 +110,7 @@ export function useSimulation() {
   const autoRanRef = useRef(false) // has the launch-chosen scenario been auto-started this callback?
   const resumeRef = useRef(null) // resumes recap playback on a fresh user gesture
   const chooseRecapModeRef = useRef(null)
+  const recapLangRef = useRef('en') // language the recap resolved to ('en' | 'hi') — drives mock Z too
   // Auto-pickup (mock caller) plumbing — India ring behaviour.
   const pickupRef = useRef(null) // { deadline, timer } — network connects the call after ~30 s of ring
   const pickedUpRef = useRef(false) // the call got connected while the recap plays/stays ready
@@ -522,9 +523,12 @@ export function useSimulation() {
         callerId: CALLER.callerId,
         sessionId: SESSIONS.call2,
         ringWindowS: AUTO_PICKUP.ringDelayS,
-        language: RECAP_LANG, // Hinglish recap (backend writes Hinglish frames)
+        language: RECAP_LANG, // 'auto' — backend matches the recap to the conversation language
       })
       if (!aliveRef.current) return
+      // The backend resolved 'auto' to the language the conversation was
+      // actually spoken in — the mock caller and recap audio follow it.
+      recapLangRef.current = payload.language === 'hi' ? 'hi' : 'en'
       const checks = payload.freshness?.results || []
       for (const f of checks.filter((x) => x.status === 'CHANGED')) {
         pushEvent('freshness.discrepancy_found', `${f.label}: ${f.cached_value} → ${f.live_value}`, { key: f.key, cached: f.cached_value, live: f.live_value, latency_ms: f.latency_ms })
@@ -558,7 +562,7 @@ export function useSimulation() {
         speaker: current.speaker,
         model: current.model,
         timeScaleFactor: current.time_scale_factor,
-        lang: RECAP_LANG, // 'hi' — Hindi accent voice (nadi) on the Rime side
+        lang: current.language || RECAP_LANG, // resolved recap language — voice on the Rime side
       })
       objectUrl = fetched.objectUrl
       fetchMs = fetched.fetchMs
@@ -971,14 +975,16 @@ export function useSimulation() {
 
   async function preloadMockCallerAudios() {
     const m = mockRef.current
-    // Scripted Z always speaks Hinglish (fixed — no language switch).
-    const script = MOCK_CALLER.lines
+    // Mock Z speaks the same language the recap resolved to (EN or HI) — one
+    // language for the whole auto-pickup run.
+    const lang = recapLangRef.current === 'hi' ? 'hi' : 'en'
+    const script = MOCK_CALLER.lines[lang] || MOCK_CALLER.lines.en
     try {
       const lines = await preloadMockLines(script, {
-        speaker: MOCK_CALLER.speaker,
+        speaker: MOCK_CALLER.speakers[lang] || MOCK_CALLER.speakers.en,
         model: MOCK_CALLER.model || undefined,
         timeScaleFactor: MOCK_CALLER.timeScaleFactor,
-        lang: MOCK_CALLER.language,
+        lang,
       })
       if (!aliveRef.current) {
         lines.forEach((l) => URL.revokeObjectURL(l.objectUrl))

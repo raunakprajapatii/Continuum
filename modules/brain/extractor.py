@@ -53,6 +53,46 @@ _SPOKEN_DOLLARS_RE = re.compile(
     r"\b(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s+(?:us\s+)?dollars?\b", re.IGNORECASE
 )
 
+# ── Conversation-language detection ───────────────────────────────────────────
+# The recap's fixed frames (freshness flag, next-action lead-in, interruption
+# note) must be spoken in the language the call was actually conducted in.
+# STT romanizes Devanagari to Latin-script Hinglish before storage, so
+# detection works on the romanized text: a handful of Hinglish markers with
+# word boundaries is a reliable "this call was Hindi/Hinglish" signal, and a
+# pure-English call stays English.
+_DEVANAGARI_RE = re.compile(r"[\u0900-\u097f]")
+
+_HINGLISH_MARKERS = (
+    "hai", "hain", "kya", "nahi", "bhai", "aap", "mujhe", "theek", "thik",
+    "chahiye", "baat", "karo", "kaise", "tum", "hum", "abhi", "haan",
+    "accha", "achha", "wala", "waala", "sahi", "bolo", "dekh", "ji",
+    "mera", "meri", "tere", "unki", "uski", "apna", "apne", "kuch",
+    "kyun", "kyu", "kahan", "yahan", "wahan", "koi", "bhi", "ho",
+    "raha", "rahi", "diya", "kiya", "hoga", "tha", "thi",
+)
+
+
+def detect_conversation_language(text: str) -> str:
+    """
+    Return ``"hi"`` when the transcript looks Hindi/Hinglish, else ``"en"``.
+
+    Devanagari script is an immediate ``hi``. Otherwise count Latin-script
+    Hinglish markers as whole words; two or more distinct markers (or three
+    total hits) classify the text as Hinglish.
+    """
+    if not text or not text.strip():
+        return "en"
+    if _DEVANAGARI_RE.search(text):
+        return "hi"
+    lower = text.lower()
+    hits = 0
+    for marker in _HINGLISH_MARKERS:
+        hits += len(re.findall(rf"\b{re.escape(marker)}\b", lower))
+        if hits >= 3:
+            return "hi"
+    return "hi" if hits >= 2 else "en"
+
+
 # Optional enterprise catalog (mocks/enterprise) — used to key product prices
 # mentioned in the call as ``price_<sku>`` facts so the freshness checker can
 # re-verify them against the Meridian live price feed.  Guarded so the brain
@@ -269,6 +309,10 @@ class ConversationExtractor:
         detected_name = caller_name or (prior_summary.caller_name if prior_summary else None)
         full_text = " ".join(t.text for t in valid_turns)
 
+        # Language the conversation was actually spoken in (drives the recap
+        # frames: freshness flag / next-action lead-in / interruption note).
+        language = detect_conversation_language(full_text)
+
         # Detect caller name if mentioned
         name_match = re.search(r"(?:I'm|this is|speaking with)\s+([A-Z][a-z]+)", full_text)
         if name_match and not detected_name:
@@ -323,6 +367,13 @@ class ConversationExtractor:
 
         headline = self._clean_headline(headline)
 
+        # Short natural-language context so the recap is never just a headline.
+        # Built from the actual spoken turns (verbatim substance, no invented
+        # phrasing); the recap builder caps each sentence at 20 words.
+        context = self._heuristic_context(valid_turns)
+        if not context and prior_summary and prior_summary.context:
+            context = prior_summary.context
+
         last_turn_text = valid_turns[-1].text if is_interrupted else None
 
         return ThreadSummary(
@@ -330,6 +381,8 @@ class ConversationExtractor:
             caller_id=caller_id,
             caller_name=detected_name,
             headline=headline,
+            context=context,
+            language=language,
             open_items=open_items,
             commitments=commitments,
             time_sensitive_facts=list(merged_facts_dict.values()),
@@ -341,6 +394,27 @@ class ConversationExtractor:
             is_interrupted=is_interrupted,
             call_count=(prior_summary.call_count + 1) if prior_summary else 1,
         )
+
+    @staticmethod
+    def _heuristic_context(valid_turns: list[TranscriptEvent]) -> str:
+        """
+        Deterministic context for the heuristic fallback: the first couple of
+        substantive spoken turns, verbatim, so the recap carries real content
+        ("what was actually said") instead of a bare headline.
+
+        Only turns with real substance (12+ chars) qualify, so pure greetings
+        don't fill the context slot. The recap builder caps each sentence at
+        20 words and validates Rime compliance before speaking.
+        """
+        sentences: list[str] = []
+        for turn in valid_turns:
+            if len(sentences) >= 2:
+                break
+            text = turn.text.strip()
+            if len(text) >= 12:
+                sentences.append(text)
+        return " ".join(sentences).strip()
+
 
     async def _gemini_extract(
         self,
@@ -488,11 +562,20 @@ Transcript:
 
             headline = self._clean_headline(data.get("headline", "Call completed."))
 
+            # Language the conversation was actually spoken in — drives the
+            # recap frames (freshness flag / next-action / interruption note).
+            language = detect_conversation_language(transcript_str)
+            context = str(data.get("context", "") or "").strip()
+            if not context and prior_summary and prior_summary.context:
+                context = prior_summary.context
+
             return ThreadSummary(
                 thread_id=thread_id or (prior_summary.thread_id if prior_summary else f"thread_{caller_id}"),
                 caller_id=caller_id,
                 caller_name=data.get("caller_name") or caller_name or (prior_summary.caller_name if prior_summary else None),
                 headline=headline,
+                context=context,
+                language=language,
                 open_items=data.get("open_items", []),
                 commitments=commitments,
                 time_sensitive_facts=facts,

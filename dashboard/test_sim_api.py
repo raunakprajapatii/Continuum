@@ -226,6 +226,79 @@ def test_sim_recap_hinglish_language_frames() -> None:
     assert recap_en.json()["language"] == "en"
 
 
+def test_sim_recap_auto_language_follows_conversation() -> None:
+    """
+    With no explicit language, the recap follows the language the call was
+    actually spoken in: a Hindi/Hinglish thread gets Hinglish frames + the
+    Hindi-accented voice, an English thread gets English frames + the default
+    whisper voice.
+    """
+    # ── Hinglish thread → auto 'hi' ──────────────────────────────────────────
+    client.post("/api/sim/reset", json={"caller_id": CALLER_Z, "session_ids": [SESS_ONE, SESS_TWO]})
+    hinglish_turns = [
+        ("CALLER", "Hey, Z bhai yahan se bol raha hai, basmati rice ka quote check karo."),
+        ("USER", "Haan theek hai, basmati ab $940 per tonne hai."),
+        ("USER", "I'll check with finance aur kal tak confirm kar dunga."),
+    ]
+    for speaker, text in hinglish_turns:
+        response = client.post(
+            "/api/sim/turn",
+            json={"session_id": SESS_ONE, "speaker": speaker, "text": text},
+        )
+        assert response.status_code == 202
+    response = client.post(
+        "/api/sim/call-ended",
+        json={"session_id": SESS_ONE, "caller_id": CALLER_Z, "caller_name": "Z", "interrupted": True},
+    )
+    assert response.status_code == 200
+
+    recap = client.post(
+        "/api/sim/recap",
+        json={"caller_id": CALLER_Z, "session_id": SESS_TWO, "ring_window_s": 25.0},
+    )
+    assert recap.status_code == 200
+    payload = recap.json()
+    assert payload["language"] == "hi", "auto language must follow the Hinglish thread"
+    assert payload["speaker"] == "nadi", "Hinglish recap must use the Hindi-accent voice (nadi)"
+    # Hinglish frames: interruption note + next-action lead-in are localised.
+    assert "Call beech mein cut" in payload["text"]
+    assert "Aapka move" in payload["text"]
+    assert not any("\u0900" <= ch <= "\u097f" for ch in payload["text"])
+
+    # ── English thread → auto 'en' ───────────────────────────────────────────
+    _seed_call_one()
+    recap_en = client.post(
+        "/api/sim/recap",
+        json={"caller_id": CALLER_Z, "session_id": SESS_TWO, "ring_window_s": 25.0},
+    )
+    assert recap_en.status_code == 200
+    payload_en = recap_en.json()
+    assert payload_en["language"] == "en", "auto language must follow the English thread"
+    assert payload_en["speaker"] == "eyre", "English recap must use the default whisper voice (eyre)"
+    assert "Your move" in payload_en["text"]
+
+
+def test_sim_recap_context_keeps_recap_substantive() -> None:
+    """
+    The recap carries the extracted context (what was actually discussed), so
+    an interrupted short call never collapses into just "call got cut" + "last
+    line" — the substance and the freshness flag are both spoken.
+    """
+    _seed_call_one()
+    recap = client.post(
+        "/api/sim/recap",
+        json={"caller_id": CALLER_Z, "session_id": SESS_TWO, "ring_window_s": 25.0},
+    )
+    assert recap.status_code == 200
+    payload = recap.json()
+    # Real spoken content from the call survives into the recap text...
+    assert "four hundred dollars" in payload["text"], "context must carry the call's substance"
+    # ...the freshness flag still fires...
+    assert "Heads up" in payload["text"] or "$420" in payload["text"]
+    # ...and the interruption note does not crowd out the substance.
+    assert "mid-sentence" in payload["text"] or "dropped" in payload["text"]
+
+
 def test_sim_call_ended_without_turns_is_409() -> None:
     client.post(
         "/api/sim/reset",
