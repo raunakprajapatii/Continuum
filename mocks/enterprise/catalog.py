@@ -48,7 +48,7 @@ PRODUCTS: list[dict] = [
     {
         "sku": "BAS112",
         "name": "Basmati Rice 1121",
-        "aliases": ["basmati rice", "basmati", "rice 1121", "1121 basmati", "basmati rice 1121"],
+        "aliases": ["basmati rice", "basmati", "rice", "rice 1121", "1121 basmati", "basmati rice 1121"],
         "category": "Agri",
         "unit": "tonne",
         "base_price": "$940",
@@ -272,7 +272,7 @@ def find_price_mentions(text: str, max_products: int = 4) -> list[dict]:
     for alias, sku in ALL_ALIASES:
         if sku in seen or len(results) >= max_products:
             continue
-        for m in re.finditer(re.escape(alias), text, re.IGNORECASE):
+        for m in re.finditer(rf"\b{re.escape(alias)}\b", text, re.IGNORECASE):
             pos = m.start()
             # Nearest price token; on a tie prefer the price that comes AFTER
             # the product name ("wheat is $320" → $320, not the earlier $950).
