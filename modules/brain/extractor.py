@@ -404,22 +404,17 @@ class ConversationExtractor:
     @staticmethod
     def _heuristic_context(valid_turns: list[TranscriptEvent]) -> str:
         """
-        Deterministic context for the heuristic fallback: the first couple of
-        substantive spoken turns, verbatim, so the recap carries real content
-        ("what was actually said") instead of a bare headline.
-
-        Only turns with real substance (12+ chars) qualify, so pure greetings
-        don't fill the context slot. The recap builder caps each sentence at
-        20 words and validates Rime compliance before speaking.
+        Deterministic context for the heuristic fallback: the first
+        substantive spoken turn, capped at 15 words for maximum brevity.
         """
-        sentences: list[str] = []
         for turn in valid_turns:
-            if len(sentences) >= 2:
-                break
             text = turn.text.strip()
             if len(text) >= 12:
-                sentences.append(text)
-        return " ".join(sentences).strip()
+                words = text.split()
+                if len(words) > 15:
+                    return " ".join(words[:14]) + "."
+                return text if text.endswith((".", "!", "?")) else text + "."
+        return ""
 
 
     async def _gemini_extract(
@@ -452,41 +447,29 @@ class ConversationExtractor:
 
         prompt = f"""
 You are the Brain of Continuum, a voice continuity assistant. Your memory
-summary is read back as a short spoken recap in the agent's earpiece right
-before they answer a callback. It should sound like a sharp, unflappable
-assistant briefing someone in five seconds flat — think Jarvis, not a
-bullet-point log. Warm, efficient, natural phrasing. Never robotic fragments.
+summary is read back as an ultra-compact spoken recap in the agent's earpiece
+right before they answer a callback. It must be extremely brief, punchy, and
+direct — strictly important points only, fewest words possible, zero fluff.
 
-WORKFLOW (do both steps, in order):
-STEP 1 - Read the whole transcript and mentally note every substantive
-point: what the call was about, what was decided, what's still open, any
-numbers/dates/statuses, who promised what. Don't skip anything real.
-STEP 2 - Compress that into the spoken recap below. Compression means
-cutting fluff (greetings, small talk, apologies, repeated topics, filler)
-- it does NOT mean cutting substance. If something mattered to the call,
-it must survive into the JSON somewhere.
+MANDATORY RULES:
+- BE ULTRA-COMPACT. Maximum economy of words.
+- Cut all greetings, small talk, apologies, narrative transitions, and filler.
+- Keep ONLY critical substantive facts: customer/buyer, products, quantities,
+  prices (especially corrected or wrong quotes), and pending details/actions.
 
-STRICT CONSTRAINTS (content will be spoken aloud via Rime TTS):
+STRICT FIELD CONSTRAINTS:
 
-1. headline: ONE sentence, under 20 words. No preamble ("Here is a
-   summary", "Summary:", "In this call..."). Lead directly with the single
-   most important thing the agent needs to know walking in.
+1. headline: EXACTLY ONE short punchy sentence (strictly under 14 words).
+   Lead directly with the core situation (e.g. "Z wants 2t rice and 4t cotton; order pending.").
+   No preamble ("Here is a summary", "In this call...").
 
-2. context: 1-3 natural spoken sentences giving the agent the real
-   substance behind the headline - what was discussed, why it matters, any
-   relevant background. This is where detail lives; don't starve it to
-   keep the headline short. Still no filler, still spoken cadence, not a
-   report.
+2. context: At most ONE concise sentence (under 14 words) with essential
+   substance only (e.g. "Yesterday's price was incorrect; need customer contact and address.").
+   Never write multiple sentences. No filler words.
 
-3. open_items: topics still genuinely unresolved AND actionable. Include
-   as many as are real (usually 1-4) - don't pad, and don't cut a real one
-   just to hit a count. Each under 12 words. Drop anything that just
-   repeats the headline or a commitment.
+3. open_items: 1-2 items only, strictly under 8 words each (e.g. "Confirm corrected prices", "Collect customer address").
 
-4. commitments: real promises or action items only, each with the true
-   owner ('user' or 'caller') and is_resolved: false. Give enough of a
-   clause to be useful on its own (what, and if relevant by when) - don't
-   truncate to the point it's ambiguous.
+4. commitments: 1-2 items only, strictly under 8 words each.
 
 5. time_sensitive_facts: concrete values that could go stale (prices,
    deadlines, quantities, statuses, reference numbers), one per fact with
@@ -504,10 +487,8 @@ freshness checker can re-verify them against the live enterprise feed):
    - English conversation -> output in English.
    - Hindi or Hinglish conversation (incl. Devanagari transcripts) ->
      output in HINGLISH: Hindi written in Latin (Roman) letters, naturally
-     mixed with English words, e.g. "Z ko Q3 number chahiye tha, aapne
-     finance se check karne ko kaha." Never output Devanagari script. No
-     separate switch; Hinglish is the single spoken voice for Hindi
-     conversations.
+     mixed with English words, e.g. "Z ko 2 tonne rice aur 4 tonne cotton chahiye, order pending hai."
+     Never output Devanagari script.
 
 Return ONLY valid JSON matching:
 {{

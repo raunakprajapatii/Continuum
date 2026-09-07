@@ -426,9 +426,8 @@ class RecapTextBuilder:
     @staticmethod
     def _format_context(summary: ThreadSummary) -> str:
         """
-        Spoken context behind the headline: at most two sentences, each capped
-        at 20 words so the Rime prompt-guide validation can never fail on the
-        extracted context.
+        Spoken context behind the headline: at most one concise sentence,
+        capped at 15 words to keep the spoken recap light and compact.
         """
         if not summary.context:
             return ""
@@ -438,10 +437,10 @@ class RecapTextBuilder:
             if s.strip()
         ]
         kept: list[str] = []
-        for sentence in sentences[:2]:
+        for sentence in sentences[:1]:
             words = sentence.split()
-            if len(words) > 20:
-                words = words[:20]
+            if len(words) > 15:
+                words = words[:15]
             kept.append(" ".join(words))
         return " ".join(kept)
 

@@ -2,10 +2,10 @@
 
 How to start the demo stack by hand. Two processes (no mocks needed):
 
-| Process | What it is | URL |
-|---------|-----------|-----|
+| Process           | What it is                                                                                              | URL                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------- | --------------------- |
 | Dashboard backend | FastAPI control surface: Deepgram STT bridge, Gemini recap writer, Rime TTS proxy, SQLite thread memory | http://localhost:8000 |
-| Frontend | Vite dev server (React dashboard) | http://localhost:5173 |
+| Frontend          | Vite dev server (React dashboard)                                                                       | http://localhost:5173 |
 
 Open **http://localhost:5173** in Chrome. The launch screen first asks for the
 **test case** you want to run (before any recording):
@@ -114,13 +114,13 @@ curl http://localhost:8000/api/capabilities
 
 ## Key .env values
 
-| Variable | Purpose |
-|----------|---------|
-| `RIME_API_KEY` | Rime TTS (the recap voice — never substituted) |
-| `DEEPGRAM_API_KEY` | Live streaming STT for both speakers |
-| `GEMINI_API_KEY` | Writes the recap summary (falls back to a heuristic without it) |
-| `RIME_TIME_SCALE_FACTOR` | `0.78` — the recap speaks a little faster |
-| `USE_MOCKS` | Keep `false` — the demo is fully live |
+| Variable                   | Purpose                                                         |
+| -------------------------- | --------------------------------------------------------------- |
+| `RIME_API_KEY`           | Rime TTS (the recap voice — never substituted)                 |
+| `DEEPGRAM_API_KEY`       | Live streaming STT for both speakers                            |
+| `GEMINI_API_KEY`         | Writes the recap summary (falls back to a heuristic without it) |
+| `RIME_TIME_SCALE_FACTOR` | `0.78` — the recap speaks a little faster                    |
+| `USE_MOCKS`              | Keep`false` — the demo is fully live                         |
 
 ---
 

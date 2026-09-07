@@ -52,13 +52,11 @@ export const AUTO_PICKUP = {
 // as CALLER turns — it never has to be "taken as input" from the mic. gapMs
 // is silence after each line so the presenter can reply.
 //
-// The script IS the Meridian enterprise scenario: Z is the procurement
-// manager for a textiles client confirming commodity quotes against the
-// live enterprise catalog (mocks/enterprise) — Basmati rice 1121 ($940/t),
-// Copper cathode ($8,940/t, LME-linked) and Shankar-6 cotton ($1,275/bale).
-// The product names + $-prices are exactly what the Brain extractor keys as
-// `price_<sku>` facts, so the freshness checker can re-verify them against
-// the feed on port 8001.
+// The script IS the Meridian enterprise scenario: you are a salesman at Meridian.
+// Z wants to buy rice and cotton (2 and 4 tonnes respectively) for his store.
+// In call 1, you quote a wrong price and ask for name/address before disconnect.
+// In call 2 (next day), Z asks if he should place the order, listens to the corrected
+// details, and provides his name, contact number, and address with 8s speaking gaps.
 //
 // Z speaks the SAME language the recap resolved to (EN or HI) so the whole
 // India demo — recap, caller, and your voice input — is one language.
@@ -74,18 +72,16 @@ export const MOCK_CALLER = {
   fullVolume: 0.85, // once live (recap finished / interrupted)
   lines: {
     en: [
-      { text: 'Hey — hello? Can you hear me? The network finally connected the call.', gapMs: 2600 },
-      { text: 'So, did you get a chance to check the Basmati rice 1121 quote? Export grade is at $940 per tonne.', gapMs: 3200 },
-      { text: 'And on the copper cathode — the LME settlement came through. Last quoted $8,940 per tonne.', gapMs: 2800 },
-      { text: 'Great. And the Shankar 6 cotton bales — can we lock $1,275?', gapMs: 2600 },
-      { text: 'Perfect. I will send the revised purchase order for the basmati by tomorrow morning.', gapMs: 0 },
+      { text: 'Hey, yesterday our call was cut off. Shall I place the order for the two tonnes rice and four tonnes cotton?', gapMs: 8000 },
+      { text: 'Yes, what are the corrected price details for the rice and cotton?', gapMs: 8000 },
+      { text: 'Understood. My name is Z, contact number is 9876543210, and address is Store 4, Central Market.', gapMs: 8000 },
+      { text: 'Great, please lock the order and confirm the dispatch. Thank you!', gapMs: 8000 },
     ],
     hi: [
-      { text: 'Hey — hello? Sun paa rahe ho? Network ne finally call connect kar di.', gapMs: 2600 },
-      { text: 'To, basmati rice 1121 ka quote check kiya? Export grade ab $940 per tonne hai.', gapMs: 3200 },
-      { text: 'Aur copper cathode — LME settlement aa gaya. Last quote $8,940 per tonne tha.', gapMs: 2800 },
-      { text: 'Achha. Aur Shankar 6 cotton bales — $1,275 par lock kar sakte hain?', gapMs: 2600 },
-      { text: 'Perfect. Kal subah basmati ka revised purchase order bhej dunga.', gapMs: 0 },
+      { text: 'Hey, kal hamari call cut ho gayi thi. To kya main do tonne rice aur char tonne cotton ka order place kar doon?', gapMs: 8000 },
+      { text: 'Haan, rice aur cotton ki corrected details kya hain?', gapMs: 8000 },
+      { text: 'Theek hai. Mera naam Z hai, contact number 9876543210, aur address Store 4, Central Market hai.', gapMs: 8000 },
+      { text: 'Great, order lock kar dena aur dispatch confirm kar dena. Thank you!', gapMs: 8000 },
     ],
   },
 }
