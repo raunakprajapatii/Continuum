@@ -316,9 +316,6 @@ Continuum enforces strict, transparent failure boundaries rather than silent deg
 ## Hackathon Submission
 
 All submission deliverables and evidence are consolidated in [`evaluation/`](evaluation/):
-- **Demo Script:** [`evaluation/Continuum_Demo_Website_Script.pdf`](evaluation/Continuum_Demo_Website_Script.pdf) (4–5 min demo flow)
 - **Evidence:** [`evaluation/RIME_EVIDENCE.md`](evaluation/RIME_EVIDENCE.md) (claims, acceptance tests, logs, limitations)
-- **Blueprint:** [`evaluation/Continuum_Rime_Hackathon_Blueprint.pdf`](evaluation/Continuum_Rime_Hackathon_Blueprint.pdf)
-- **Submission Package:** [`evaluation/SUBMISSION_CHECKLIST.md`](evaluation/SUBMISSION_CHECKLIST.md)
 
 Built for the **Rime Hackathon** — Interruption & Recovery · Conversation Continuity paths.
