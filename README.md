@@ -65,16 +65,18 @@ Audio → Transcript → Memory → Recap Text → Speech → Private Track
 
 ## Rime Integration
 
-| Parameter | Value |
-|-----------|-------|
-| Model | `coda` (expressive default) / `mist_v2` / `mist_v3` |
-| Speaker | `sol` (see live catalog at submission time) |
-| Endpoint | Regional — nearest to LiveKit deployment |
-| `timeScaleFactor` | `0.85` — speeds up connective filler in the recap |
-| `inlineSpeedAlpha` | Applied to numbers/facts for clarity |
-| `spell()` | Wraps ticket IDs, account numbers, confirmation codes |
+| Parameter | Value | Details |
+|-----------|-------|---------|
+| **Model ID** | `coda` (default) · `mist_v2` · `mist_v3` | Coda for expressive natural delivery; Mist v2/v3 for granular inline prosody |
+| **Speaker / Voice** | `sol` · `eyre` · `nadi` | `sol` (catalog baseline), `eyre` (English recap), `nadi` (Hinglish recap) |
+| **Language** | `en` (English) · `hi` (Latin-script Romanized Hinglish) | Auto-detected from call context (`RECAP_LANG=auto`) |
+| **Endpoint** | `https://users.rime.ai/v1/rime-tts` | Live regional endpoints nearest to deployment |
+| **Audio Format** | `pcm_24000` · `audio/mp3` | `pcm_24000` for LiveKit audio frames; `audio/mp3` for HTTP browser stream |
+| **Transport** | LiveKit Agents (`livekit-plugins-rime`) · Chunked HTTP | LiveKit for telephony/SIP; HTTP direct stream for web dashboard |
+| **Pacing / Speed** | `timeScaleFactor: 0.78` – `0.85` | Speeds up connective conversational filler while preserving clarity |
+| **Inline Controls** | `inlineSpeedAlpha` & `spell(...)` | `inlineSpeedAlpha` on prices/numbers; `spell()` on ticket IDs and codes |
 
-**Voices are verified against the live catalog** (`users.rime.ai/data/voices/all-v2.json`) at build time, not hard-coded from a stale list.
+> **Catalog Hygiene**: Speaker voices are verified at build and runtime against Rime's live production catalog (`https://users.rime.ai/data/voices/all-v2.json`) rather than hardcoded lists.
 
 ---
 
@@ -130,7 +132,7 @@ USE_MOCKS=true pytest evaluation/ -v
 ### Interactive demo dashboard (live website simulation)
 
 The web app (`web/`) is a staged, interactive version of the demo-day script
-(`Continuum_Demo_Website_Script.pdf`). It walks through the full experience
+([`Continuum_Demo_Website_Script.pdf`](evaluation/Continuum_Demo_Website_Script.pdf)). It walks through the full experience
 end to end — **no mocks, everything live**:
 
 1. **Call one (yesterday)** — a live two-way conversation. User 1 and User 2
@@ -279,10 +281,24 @@ See [`evaluation/RIME_EVIDENCE.md`](evaluation/RIME_EVIDENCE.md) for acceptance 
 ## Known Limitations
 
 - **Consent & privacy:** Recording third-party calls without disclosure is a legal concern in many jurisdictions. This demo uses synthetic/de-identified scripts only. A production version would require a recorded-line disclosure, opt-out mechanism, and data retention limits.
-- **SIP telephony setup:** The fiddliest part of the stack. If LiveKit SIP setup is incomplete for the demo, the system falls back to a browser-simulated ring state (disclosed as a limitation in RIME_EVIDENCE.md).
+- **SIP telephony setup:** The fiddliest part of the stack. If LiveKit SIP setup is incomplete for the demo, the system falls back to a browser-simulated ring state (disclosed as a limitation in `evaluation/RIME_EVIDENCE.md`).
 - **Ring window duration:** Varies by carrier (typically 15–25 seconds). The system front-loads the headline sentence so even a 5-second window delivers value.
 - **Speaker diarization:** Deepgram streaming diarization is not perfect on overlapping speech; the system tags ambiguous turns as `UNKNOWN`.
-- **Fallback TTS:** There is no silent Rime fallback. If Rime is unavailable, the system surfaces an error rather than substituting another TTS provider, per hackathon rules.
+
+---
+
+## Failure Behavior & Resilience
+
+Continuum enforces strict, transparent failure boundaries rather than silent degradation:
+
+| Failure Mode | System Response | Rime / State Guarantee |
+|--------------|-----------------|------------------------|
+| **Rime Service Outage / Missing Key** | Spoken recap flow halts immediately with a user-visible banner (`503 Service Unavailable`). | **No silent fallback**: Continuum will never fall back to browser `speechSynthesis`, `gTTS`, or any secondary engine in the judged recap path. |
+| **STT / Deepgram Disconnection** | Active turns are retained in memory; UI prompts with a visual mic status notice. | Transcripts pause cleanly; buffered turns remain intact for the Thread Memory Store. |
+| **LLM / Gemini Rate Limit or Timeout** | Falls back to deterministic heuristic extraction (`ConversationExtractor`). | The recap summary is generated deterministically without blocking the ring window. |
+| **Enterprise Freshness API Offline** | Facts are flagged as `UNVERIFIED`. | Stale or unverified facts are omitted from the spoken recap to prevent hallucinated quotes. |
+| **Immediate Pickup / User Barge-In** | Audio playback aborts in `< 1ms` (`AbortController` / stream cancel); caller audio un-ducks. | Queued TTS frames are canceled; no zombie audio plays over the live conversation. |
+| **Dual-Track Isolation Breach Attempt** | Any simulated attempt to mix private audio into the caller track raises `TrackFencingViolationError`. | Hard invariant: caller-facing track is strictly protected at the transport layer. |
 
 ---
 
@@ -299,8 +315,10 @@ See [`evaluation/RIME_EVIDENCE.md`](evaluation/RIME_EVIDENCE.md) for acceptance 
 
 ## Hackathon Submission
 
-- **Demo:** 4–5 minute recording (see submission checklist)
-- **Evidence:** [`evaluation/RIME_EVIDENCE.md`](evaluation/RIME_EVIDENCE.md)
-- **Checklist:** Blueprint § 15 (Submission Checklist)
+All submission deliverables and evidence are consolidated in [`evaluation/`](evaluation/):
+- **Demo Script:** [`evaluation/Continuum_Demo_Website_Script.pdf`](evaluation/Continuum_Demo_Website_Script.pdf) (4–5 min demo flow)
+- **Evidence:** [`evaluation/RIME_EVIDENCE.md`](evaluation/RIME_EVIDENCE.md) (claims, acceptance tests, logs, limitations)
+- **Blueprint:** [`evaluation/Continuum_Rime_Hackathon_Blueprint.pdf`](evaluation/Continuum_Rime_Hackathon_Blueprint.pdf)
+- **Submission Package:** [`evaluation/SUBMISSION_CHECKLIST.md`](evaluation/SUBMISSION_CHECKLIST.md)
 
 Built for the **Rime Hackathon** — Interruption & Recovery · Conversation Continuity paths.

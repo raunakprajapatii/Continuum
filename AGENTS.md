@@ -9,7 +9,7 @@ If an agent cannot satisfy a rule, it must **flag it explicitly** rather than si
 ## Architecture
 
 The system is described fully in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).  
-The module breakdown and pair ownership are in the [project blueprint](Continuum_Rime_Hackathon_Blueprint.pdf), § 06–08.
+The module breakdown and pair ownership are in the [project blueprint](evaluation/Continuum_Rime_Hackathon_Blueprint.pdf), § 06–08.
 
 The pipeline is:
 
