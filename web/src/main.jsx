@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import './styles.css'
 import './sim-console.css'
-import logoUrl from './assets/ChatGPT Image Sep 5, 2026, 08_41_24 PM.png'
+import logoUrl from './assets/continuum-logo.png'
 import { format, t } from './i18n.js'
 import { BARGE_EXAMPLES, CALLER, INTENT_LABELS, SPEAKERS } from './sim/config.js'
 import { PHASE, RECAP_STATE, useSimulation } from './sim/useSimulation.js'

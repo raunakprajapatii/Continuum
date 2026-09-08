@@ -250,8 +250,6 @@ continuum/
 ├── evaluation/           # Acceptance tests + RIME_EVIDENCE.md
 ├── docs/
 │   └── ARCHITECTURE.md   # Full pipeline diagram and module breakdown
-├── AGENTS.md             # Antigravity agent guardrails
-├── CODEOWNERS            # PR review assignments
 ├── .env.example          # Environment variable template (no credentials)
 ├── requirements.txt
 └── pyproject.toml

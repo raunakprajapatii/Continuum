@@ -1,0 +1,9 @@
+{
+  "test": "interruptibility",
+  "stop_latency_ms": 0.09,
+  "threshold_ms": 500.0,
+  "is_interruptible_flag_honored": true,
+  "orphaned_audio_remaining": false,
+  "pass": true,
+  "note": "Barge-in cancellation stopped playback promptly without orphan audio."
+}

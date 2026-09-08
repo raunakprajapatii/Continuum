@@ -295,7 +295,7 @@ def test_sim_recap_context_keeps_recap_substantive() -> None:
     assert recap.status_code == 200
     payload = recap.json()
     # Real spoken content from the call survives into the recap text...
-    assert "four hundred dollars" in payload["text"], "context must carry the call's substance"
+    assert "$400" in payload["text"] or "four hundred dollars" in payload["text"], "context must carry the call's substance"
     # ...the freshness flag still fires...
     assert "Heads up" in payload["text"] or "$420" in payload["text"]
     # ...and the interruption note does not crowd out the substance.

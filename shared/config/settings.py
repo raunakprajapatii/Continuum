@@ -132,7 +132,6 @@ class Settings(BaseSettings):
         "gemini-3.6-flash",
         description=(
             "Fast / cheap model for latency-sensitive paths (TL;DR generation). "
-            "Swappable via Antigravity's multi-model support. "
             "gemini-2.x models are retired for new keys — 3.6-flash is the "
             "current Flash line."
         ),
@@ -149,7 +148,7 @@ class Settings(BaseSettings):
         "",
         description=(
             "API key for the LLM provider (Gemini / Anthropic). "
-            "Leave empty if using Antigravity's built-in model access."
+            "Leave empty if using standard GEMINI_API_KEY."
         ),
     )
     gemini_api_key: str = Field(

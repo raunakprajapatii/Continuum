@@ -1,6 +1,6 @@
 # Rime AI Research & Technical Intelligence
 
-Comprehensive research based on the official Rime AI documentation ([docs.rime.ai](https://docs.rime.ai)) for **Continuum**, a real-time telephony platform delivering an AI-generated whisper recap privately into an agent's ear before answering a reconnected dropped call.
+Comprehensive research based on the official Rime AI documentation ([docs.rime.ai](https://docs.rime.ai)) for **Continuum**, a real-time telephony platform delivering a synthesized whisper recap privately into an agent's ear before answering a reconnected dropped call.
 
 ---
 

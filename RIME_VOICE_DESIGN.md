@@ -1,13 +1,13 @@
 # Continuum: Optimal Voice Pipeline & TTS Design Specification
 
 > **Architectural Design Specification for Continuum Voice & Facts (Pair D)**  
-> Synthesized from official Rime AI documentation ([RIME_RESEARCH.md](file:///Users/pratikprajapati/Continuum/RIME_RESEARCH.md)) and Continuum system architecture ([ARCHITECTURE.md](file:///Users/pratikprajapati/Continuum/docs/ARCHITECTURE.md)).
+> Synthesized from official Rime AI documentation ([RIME_RESEARCH.md](RIME_RESEARCH.md)) and Continuum system architecture ([ARCHITECTURE.md](docs/ARCHITECTURE.md)).
 
 ---
 
 ## 1. Executive Summary & Design Philosophy
 
-Continuum is a voice-native telephony continuity system. When a call abruptly drops and reconnects, an AI-generated recap is streamed privately into the agent's earpiece during the ring window—**before** the agent answers. The customer hears only standard ringback and never detects the recap.
+Continuum is a voice-native telephony continuity system. When a call abruptly drops and reconnects, a synthesized whisper recap is streamed privately into the agent's earpiece during the ring window—**before** the agent answers. The customer hears only standard ringback and never detects the recap.
 
 ### 1.1 The "Colleague Whisper" Experience
 

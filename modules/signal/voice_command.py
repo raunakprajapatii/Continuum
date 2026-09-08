@@ -3,7 +3,7 @@ modules/signal/voice_command.py
 ---------------------------------
 Ring-Window Voice Command & Barge-In Detector.
 
-Listens for user speech during the RINGING window when an AI recap is playing in
+Listens for user speech during the RINGING window when a whispered recap is playing in
 the user's private whisper channel. Detects verbal commands in English,
 Hinglish, or Hindi (Latin script or Devanagari), such as:
   - "I know, just pick up the call" / "Answer"  -> ANSWER_CALL (stops recap & connects call)

@@ -1,0 +1,13 @@
+{
+  "test": "fallback_whisper",
+  "scenario": "instant_connect_scenario_d",
+  "connected_without_ring": true,
+  "private_track_id": "continuum-private-whisper",
+  "caller_facing_track_id": "caller-facing-main",
+  "tracks_strictly_isolated": true,
+  "caller_track_recap_leak_bytes": 0,
+  "priority_ducking_applied": true,
+  "audio_levels_restored_after_playback": true,
+  "pass": true,
+  "note": "Fallback whisper channel verified on private track with audio ducking."
+}

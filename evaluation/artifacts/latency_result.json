@@ -1,0 +1,9 @@
+{
+  "test": "pre_answer_latency",
+  "latency_s": 0.0003,
+  "threshold_s": 5.0,
+  "rings_elapsed_estimate": 0.0,
+  "pass": true,
+  "fallback_option_available": true,
+  "note": "Pre-answer recap initiated well within the first 1-2 rings."
+}

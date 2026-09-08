@@ -1,0 +1,8 @@
+{
+  "test": "freshness_catch",
+  "key": "price_usd",
+  "cached_value": "$400",
+  "live_value": "$420",
+  "status": "CHANGED",
+  "pass": true
+}
