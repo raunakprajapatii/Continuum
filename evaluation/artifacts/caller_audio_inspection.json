@@ -1,0 +1,14 @@
+{
+  "test": "zero_caller_impact",
+  "tts_private_track_id": "continuum-private-whisper",
+  "caller_facing_track_id": "caller-facing-main",
+  "tracks_are_separate": true,
+  "fencing_violation_caught_on_illegal_target": true,
+  "caller_track_audio_leak_bytes": 0,
+  "playback_metrics": {
+    "duration_s": 4.853,
+    "interrupted": false
+  },
+  "pass": true,
+  "note": "Dual-track invariant strictly enforced at Transport layer."
+}

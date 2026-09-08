@@ -1,0 +1,16 @@
+{
+  "test": "pair_d_voice_facts_e2e",
+  "request_id": "b3a2c74f-88bf-474a-a049-54f3b1722fad",
+  "session_id": "mock-session-001",
+  "spoken_text": "Z wanted the Q3 number; you said you'd check with finance. Heads up \u2014 Unit price was $400, it's now $420. Your move: Loop in finance today and get back to Z on volume discounts.",
+  "model": "coda",
+  "speaker": "sol",
+  "private_track_id": "continuum-private-whisper",
+  "is_interruptible": true,
+  "time_scale_factor": 0.78,
+  "freshness_flag_present": true,
+  "old_price_present": true,
+  "new_price_present": true,
+  "dual_track_invariant_held": true,
+  "pass": true
+}

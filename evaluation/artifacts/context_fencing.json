@@ -1,0 +1,6 @@
+{
+  "test": "context_fencing",
+  "thread_id": "thread_Z_123",
+  "leaked_keywords": [],
+  "pass": true
+}

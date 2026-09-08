@@ -29,12 +29,10 @@ env/
 *.sqlite
 *.sqlite3
 
-# LiveKit / audio artifacts
+# LiveKit / audio artifacts (ignore raw audio binaries)
 *.wav
 *.mp3
 *.ogg
-evaluation/artifacts/
-!evaluation/artifacts/.gitkeep
 
 # IDE
 .vscode/
