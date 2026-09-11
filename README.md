@@ -2,10 +2,19 @@
 
 > **A voice-native conversation continuity assistant — whispered recaps that catch you up before you ever say "hello."**
 
-Continuum is a [Rime Hackathon](https://rime.ai) submission targeting two hard-problem paths:
+Continuum is a [Dataforge 2026 Hackathon - Rime PS](https://kdagiitkgp.com/register-hackathon) submission targeting two hard-problem paths:
 - **Interruption & Recovery** — detects abrupt call drops, matches the returning caller, and delivers a spoken recap before the user answers.
 - **Conversation Continuity During Tool Work** — re-verifies time-sensitive facts against a live data source before speaking them, flagging any discrepancy.
 
+## Repository
+https://github.com/raunakprajapatii/Continuum
+
+## Demo
+
+*Video is sped up to fit the 4–5 minute limit, so the voice sounds slightly higher-pitched and helium-like.*
+
+- **YouTube:** https://youtu.be/6b3ihYapTO8
+- **Drive:** https://drive.google.com/file/d/1xo8TA70JT51GM5IWvz2vM3vs53t_BFW-/view?usp=sharing
 ---
 
 ## How It Works
